@@ -1,0 +1,1889 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ゆばちゃん 家計簿</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;700;800&family=Noto+Sans+TC:wght@400;700;800&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #fdf6f0; }
+    ::-webkit-scrollbar { width: 4px; height: 4px; }
+    ::-webkit-scrollbar-track { background: #fdf6f0; }
+    ::-webkit-scrollbar-thumb { background: #f0a896; border-radius: 4px; }
+    #loading { display:flex; align-items:center; justify-content:center; height:100vh; font-family:"Noto Sans JP",sans-serif; color:#e8847a; font-size:16px; }
+  </style>
+</head>
+<body>
+  <div id="lock-screen" style="display:flex;align-items:center;justify-content:center;height:100vh;background:#fdf6f0;font-family:'Noto Sans JP','Noto Sans TC',sans-serif;">
+    <div style="text-align:center;padding:40px 32px;background:#fff;border-radius:24px;box-shadow:0 4px 24px rgba(232,132,122,0.15);border:1px solid #f0e0d6;min-width:280px;">
+      <div style="font-size:48px;margin-bottom:12px;">🐶</div>
+      <div style="font-weight:800;font-size:18px;color:#c25a52;margin-bottom:4px;">ゆばちゃん 家計簿</div>
+      <div style="color:#b08080;font-size:12px;margin-bottom:28px;">我與柯の支出紀錄</div>
+      <input id="pw-input" type="password" placeholder="密碼" onkeydown="if(event.key==='Enter')checkPw()"
+        style="width:100%;padding:12px 16px;border:1.5px solid #f0a896;border-radius:12px;font-size:15px;outline:none;background:#fff8f5;color:#3d2c2c;box-sizing:border-box;text-align:center;letter-spacing:3px;" />
+      <div id="pw-error" style="color:#d96b6b;font-size:12px;margin-top:8px;min-height:16px;"></div>
+      <button onclick="checkPw()"
+        style="margin-top:12px;width:100%;padding:13px;background:linear-gradient(135deg,#e8847a,#f0a896);color:#fff;border:none;border-radius:12px;font-size:15px;font-weight:700;cursor:pointer;letter-spacing:1px;">
+        進入
+      </button>
+    </div>
+  </div>
+  <div id="root" style="display:none;"><div id="loading">🐶 読み込み中...</div></div>
+
+  <script>
+    (function() {
+      // Check if already unlocked this session
+      if (sessionStorage.getItem('yuba_unlocked') === '1') {
+        document.getElementById('lock-screen').style.display = 'none';
+        document.getElementById('root').style.display = '';
+      }
+    })();
+    function checkPw() {
+      const val = document.getElementById('pw-input').value;
+      if (val === 'yummy') {
+        sessionStorage.setItem('yuba_unlocked', '1');
+        document.getElementById('lock-screen').style.display = 'none';
+        document.getElementById('root').style.display = '';
+      } else {
+        const err = document.getElementById('pw-error');
+        err.textContent = '密碼錯誤 🐾';
+        document.getElementById('pw-input').value = '';
+        document.getElementById('pw-input').focus();
+        setTimeout(() => { err.textContent = ''; }, 2000);
+      }
+    }
+  </script>
+
+  <!-- Firebase -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
+  <script>
+    const firebaseConfig = {
+      apiKey: "AIzaSyBlU4zq1di4ZxqTweSOAN41RYCRvmi2dno",
+      authDomain: "yuba-2d15a.firebaseapp.com",
+      databaseURL: "https://yuba-2d15a-default-rtdb.firebaseio.com",
+      projectId: "yuba-2d15a",
+      storageBucket: "yuba-2d15a.firebasestorage.app",
+      messagingSenderId: "531501903280",
+      appId: "1:531501903280:web:d288bb7b5e992f2c75ba75"
+    };
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.database();
+  </script>
+
+  <!-- React + Recharts -->
+  <script src="https://unpkg.com/react@18.2.0/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18.2.0/umd/react-dom.production.min.js" crossorigin></script>
+  <script>window.PropTypes = { func:()=>{}, bool:()=>{}, number:()=>{}, string:()=>{}, any:()=>{}, object:()=>{}, array:()=>{}, node:()=>{}, element:()=>{}, oneOf:()=>()=>{}, oneOfType:()=>()=>{}, shape:()=>()=>{}, arrayOf:()=>()=>{}, instanceOf:()=>()=>{} };</script>
+  <script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone@7.23.9/babel.min.js"></script>
+
+  <script type="text/babel">
+    const { useState, useMemo, useEffect, useRef } = React;
+    const { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } = Recharts;
+
+    // Firebase sync hook
+    // Firebase keys can't contain . # $ [ ] /
+    // So we encode/decode keys with / -> |
+    function encodeKeys(obj) {
+      if (!obj || typeof obj !== "object" || Array.isArray(obj)) return obj;
+      const out = {};
+      Object.entries(obj).forEach(([k, v]) => {
+        const safeKey = k.replace(/\//g, "|");
+        out[safeKey] = encodeKeys(v);
+      });
+      return out;
+    }
+    function decodeKeys(obj) {
+      if (!obj || typeof obj !== "object" || Array.isArray(obj)) return obj;
+      const out = {};
+      Object.entries(obj).forEach(([k, v]) => {
+        const origKey = k.replace(/\|/g, "/");
+        out[origKey] = decodeKeys(v);
+      });
+      return out;
+    }
+
+    function useFirebase(path, defaultVal) {
+      const [val, setVal] = useState(defaultVal);
+      const valRef = useRef(defaultVal);
+      const fbRef = useRef(db.ref(path));
+
+      // Load from Firebase once on mount
+      useEffect(() => {
+        fbRef.current.once("value").then(snap => {
+          const data = snap.val();
+          if (data !== null) {
+            const decoded = decodeKeys(data);
+            let parsed;
+            if (defaultVal instanceof Set) {
+              parsed = new Set(decoded);
+            } else if (defaultVal && typeof defaultVal === "object" && !Array.isArray(defaultVal)
+                       && decoded && typeof decoded === "object" && !Array.isArray(decoded)) {
+              // Merge: start with defaultVal, override with Firebase data
+              parsed = { ...defaultVal, ...decoded };
+            } else {
+              parsed = decoded;
+            }
+            valRef.current = parsed;
+            setVal(parsed);
+          }
+        }).catch(e => console.warn("Firebase load error:", path, e));
+      }, []);
+
+      function setFirebase(updater) {
+        const prev = valRef.current;
+        const newVal = typeof updater === "function" ? updater(prev) : updater;
+        valRef.current = newVal;
+        setVal(newVal);
+        // Encode keys before saving (replace / with |)
+        const toSave = newVal instanceof Set ? [...newVal] : encodeKeys(newVal);
+        fbRef.current.set(toSave)
+          .then(() => console.log("✅ Firebase saved:", path))
+          .catch(e => {
+            console.error("❌ Firebase save error:", path, e);
+            alert("Firebase 寫入失敗: " + e.message);
+          });
+      }
+
+      return [val, setFirebase];
+    }
+
+
+
+
+const ALL_DATA = {
+  "狗體": {
+    month: "狗體",
+    icon: "🐾",
+    items: [
+      { name: "仔犬代", amount: 295000 },
+      { name: "ワクチン1回目", amount: 6000 },
+      { name: "ワクチン2回目", amount: 6000 },
+      { name: "ワクチン3回目", amount: 6000 },
+      { name: "ワクチン合計(税込)", amount: 19800 },
+      { name: "狂犬病", amount: 3300 },
+      { name: "マイクロチップ装着・登録", amount: 8800 },
+      { name: "名義変更手続", amount: 2200 },
+    ],
+    total: 329100,
+    isSetup: true,
+  },
+  "保険一年(2024)": {
+    month: "保険一年(2024)",
+    icon: "🛡️",
+    items: [{ name: "保険一年", amount: 63660 }],
+    total: 63660,
+    isSetup: true,
+  },
+  "2024/12": {
+    month: "2024/12",
+    icon: "🎄",
+    items: [
+      { name: "狗食うまか", amount: 3980 },
+      { name: "アイリスオーヤマ尿墊120片", amount: 1778 },
+      { name: "蚤不到", amount: 1200 },
+      { name: "狗食コストコ", amount: 7998 },
+      { name: "刷牙粉", amount: 1767 },
+      { name: "狗繩", amount: 3900 },
+      { name: "鞍", amount: 2599 },
+      { name: "刷牙指套", amount: 1020 },
+      { name: "AirTag", amount: 4980 },
+      { name: "AirTag吊環", amount: 699 },
+      { name: "吃飯台", amount: 3383 },
+      { name: "梳子", amount: 1234 },
+      { name: "吹水+吸毛機", amount: 7599 },
+      { name: "鹿角玩具", amount: 2780 },
+      { name: "床", amount: 4990 },
+      { name: "罐頭", amount: 1053 },
+      { name: "除菌濕巾", amount: 265 },
+      { name: "指甲刀", amount: 1675 },
+      { name: "獅獅玩具", amount: 985 },
+      { name: "乾洗澡", amount: 473 },
+      { name: "洗澡濕巾*3", amount: 708 },
+      { name: "寵物洗髮精", amount: 1599 },
+      { name: "牽繩+項圈", amount: 8000 },
+      { name: "籠子", amount: 12000 },
+      { name: "ちゅ～る水分補給", amount: 822 },
+      { name: "西沙罐罐", amount: 354 },
+      { name: "雞肉香腸零食", amount: 613 },
+      { name: "大便袋", amount: 877 },
+      { name: "散步水壺", amount: 1078 },
+      { name: "清耳朵藥", amount: 1480 },
+      { name: "智育玩具", amount: 1420 },
+      { name: "廁所噴霧", amount: 1765 },
+      { name: "圍欄", amount: 11800 },
+      { name: "柯南尿盆+零食+濕紙巾+罐罐", amount: 6257 },
+      { name: "玩具", amount: 1214 },
+      { name: "柯南尿盆+罐罐+玩具", amount: 4629 },
+      { name: "寵物監視器", amount: 3480 },
+      { name: "SD卡", amount: 740 },
+      { name: "螃蟹玩具", amount: 1070 },
+      { name: "アイリスオーヤマ尿墊150片", amount: 2480 },
+    ],
+    total: 116744,
+  },
+  "2025/01": {
+    month: "2025/01",
+    icon: "🎍",
+    items: [
+      { name: "剪腳毛刀", amount: 1870 },
+      { name: "西沙罐罐32個", amount: 4128 },
+      { name: "廁所圈圈板", amount: 1250 },
+      { name: "玩具福袋", amount: 4980 },
+      { name: "零食口袋", amount: 1250 },
+      { name: "響片", amount: 1750 },
+      { name: "魚油", amount: 1382 },
+      { name: "除菌濕巾", amount: 1096 },
+      { name: "大便袋", amount: 1410 },
+      { name: "尿布", amount: 1461 },
+      { name: "洗澡濕巾*3", amount: 708 },
+      { name: "乳酸菌", amount: 600 },
+      { name: "磨指甲刀", amount: 2999 },
+      { name: "Laundly尿墊400片", amount: 3781 },
+      { name: "みじん切り器", amount: 2530 },
+      { name: "零食", amount: 765 },
+      { name: "日常用品", amount: 880 },
+      { name: "垂釣鴨子", amount: 1750 },
+      { name: "乳酸菌90g*2", amount: 3400 },
+      { name: "神奇寶貝球*2", amount: 1016 },
+      { name: "吐司玩具", amount: 880 },
+      { name: "磨牙粉", amount: 1881 },
+      { name: "ドッグランsky de sky", amount: 1100 },
+      { name: "牽繩", amount: 8350 },
+      { name: "ドッグランbless", amount: 1000 },
+      { name: "除菌濕巾60枚*3*13", amount: 3757 },
+      { name: "寵物毛巾", amount: 1280 },
+      { name: "球球兩顆", amount: 1380 },
+      { name: "狂犬病登錄費用", amount: 3550 },
+      { name: "肉球乳液30g", amount: 1024 },
+      { name: "磨牙粉", amount: 1415 },
+      { name: "睡覺墊子", amount: 1580 },
+    ],
+    total: 66203,
+  },
+  "2025/02": {
+    month: "2025/02",
+    icon: "💝",
+    items: [
+      { name: "章魚玩具2隻", amount: 1576 },
+      { name: "西沙罐罐32個", amount: 4128 },
+      { name: "睡覺墊子", amount: 1580 },
+      { name: "魚油", amount: 1382 },
+      { name: "防水墊兩塊", amount: 1948 },
+      { name: "推車第一個月", amount: 1750 },
+      { name: "Airtag項圈環", amount: 1199 },
+      { name: "乳酸菌90g*2", amount: 4468 },
+      { name: "免費玩具運費", amount: 6432 },
+      { name: "Laundly尿墊400片", amount: 3980 },
+      { name: "磨牙粉", amount: 1899 },
+      { name: "洗澡", amount: 8580 },
+      { name: "ドッグラン", amount: 1100 },
+      { name: "衣服", amount: 8580 },
+      { name: "カークランド子犬用9kg", amount: 3798 },
+      { name: "好市多寵物濕巾1800枚", amount: 2916 },
+      { name: "防水墊兩塊", amount: 1948 },
+      { name: "樂天零食+洗澡濕巾*3", amount: 4105 },
+      { name: "大便袋", amount: 1640 },
+      { name: "魚油2包", amount: 2598 },
+      { name: "刷牙指套*3", amount: 848 },
+    ],
+    total: 66455,
+  },
+  "2025/03": {
+    month: "2025/03",
+    icon: "🌸",
+    items: [
+      { name: "世界名犬牧場門票", amount: 2400 },
+      { name: "乳酸菌90g*2", amount: 4400 },
+      { name: "みんなのペット消臭剤詰め替え", amount: 1210 },
+      { name: "生日蠟燭", amount: 242 },
+      { name: "食べる野菜零食*2", amount: 296 },
+      { name: "西沙罐罐24個+芋零食", amount: 4064 },
+      { name: "行李箱租金", amount: 3500 },
+      { name: "蚤不到", amount: 2104 },
+      { name: "狗飼料罐", amount: 2622 },
+      { name: "玩具環", amount: 2180 },
+      { name: "9個月生日蛋糕", amount: 1706 },
+      { name: "磨牙粉", amount: 2312 },
+      { name: "防蟲噴霧", amount: 623 },
+      { name: "寵物監視器", amount: 3299 },
+      { name: "柵欄飲水機", amount: 2101 },
+      { name: "SD卡128GB", amount: 1575 },
+      { name: "西沙罐罐25個+野菜蘋果零食", amount: 4078 },
+      { name: "磨牙粉", amount: 2408 },
+      { name: "體內驅蟲藥ドロンタールプラス20錠", amount: 7792 },
+      { name: "狗食コストコ", amount: 7668 },
+      { name: "冷感墊", amount: 2402 },
+      { name: "魚油", amount: 1313 },
+      { name: "潔牙棒36根", amount: 1175 },
+      { name: "幸手ドッグパーク(2人）", amount: 1200 },
+    ],
+    total: 62670,
+  },
+  "2025/04": {
+    month: "2025/04",
+    icon: "🌷",
+    items: [
+      { name: "寵物展門票2人+停車場", amount: 8465 },
+      { name: "洗澡濕巾*3", amount: 810 },
+      { name: "[寵物展]豬耳+鹿肉+魚", amount: 2000 },
+      { name: "[寵物展]Doggy man 零食", amount: 1410 },
+      { name: "[寵物展]蘋果凍乾*2+起司凍乾*1", amount: 2750 },
+      { name: "[寵物展]散步包", amount: 6700 },
+      { name: "[寵物展]鹿骨+鹿肉", amount: 1700 },
+      { name: "[寵物展]鮮食*2", amount: 1000 },
+      { name: "寵物展門票第二天", amount: 2600 },
+      { name: "[寵物展]牛舌*3", amount: 1500 },
+      { name: "[寵物展]いなば凍乾*3", amount: 300 },
+      { name: "狗飼料罐", amount: 2831 },
+      { name: "洗澡", amount: 8580 },
+      { name: "床", amount: 4482 },
+      { name: "除菌濕巾60枚*3*12", amount: 3216 },
+      { name: "乳酸菌90g*2", amount: 4284 },
+      { name: "磨牙粉", amount: 1881 },
+      { name: "防滑墊27片", amount: 3840 },
+      { name: "pet sweat運動飲料2L*2", amount: 772 },
+      { name: "幸手ドッグパーク", amount: 1400 },
+      { name: "慢食墊+折疊碗*2", amount: 2183 },
+      { name: "潔牙棒72根", amount: 2762 },
+      { name: "魚油*2", amount: 2890 },
+      { name: "ちゅる80根", amount: 2421 },
+      { name: "肉丸套餐9食", amount: 2495 },
+    ],
+    total: 73272,
+  },
+  "2025/05": {
+    month: "2025/05",
+    icon: "🌻",
+    items: [
+      { name: "乳酸菌90g*2", amount: 4268 },
+      { name: "磨牙粉", amount: 1980 },
+      { name: "洗澡濕巾*3", amount: 810 },
+      { name: "防滑墊18片", amount: 2560 },
+      { name: "POCHI試吃包", amount: 1995 },
+      { name: "尖叫豬&玉米玩具", amount: 1784 },
+      { name: "刷牙水", amount: 1881 },
+      { name: "5隻動物玩具", amount: 2958 },
+      { name: "德國全肉罐頭*6", amount: 5100 },
+      { name: "洗澡濕巾*2", amount: 540 },
+      { name: "幸手ドッグパーク(2人）", amount: 1200 },
+      { name: "ドッグランsky de sky", amount: 2000 },
+      { name: "罐罐30個", amount: 4210 },
+      { name: "刷牙水", amount: 1881 },
+      { name: "ドッグランsky de sky", amount: 1100 },
+      { name: "給水機", amount: 2580 },
+      { name: "蚤不到*6", amount: 3970 },
+      { name: "大便袋", amount: 1918 },
+      { name: "洗澡", amount: 10780 },
+      { name: "[台北寵物展]豬蛋蛋+青蛙乾*2", amount: 1924 },
+      { name: "[台北寵物展]地瓜葉潔牙骨*2", amount: 962 },
+      { name: "[台北寵物展]泰國罐頭*2", amount: 769 },
+      { name: "[台北寵物展]魟魚*2+鯊魚*1", amount: 2886 },
+      { name: "[台北寵物展]熱炒包*2", amount: 1106 },
+    ],
+    total: 61162,
+  },
+  "2025/06": {
+    month: "2025/06",
+    icon: "☔",
+    items: [
+      { name: "乳酸菌90g*2", amount: 4356 },
+      { name: "狗食コストコ", amount: 7668 },
+      { name: "魚油*3", amount: 4200 },
+      { name: "刷牙指套*3", amount: 1030 },
+      { name: "好市多寵物濕巾1800枚", amount: 2916 },
+      { name: "雨衣", amount: 3231 },
+      { name: "刷牙水", amount: 1881 },
+      { name: "洗澡濕巾*3", amount: 810 },
+      { name: "地瓜零食", amount: 998 },
+      { name: "刷牙水", amount: 1881 },
+      { name: "去勢問診費", amount: 1100 },
+      { name: "心絲蟲檢查+預防藥*12顆", amount: 30426 },
+      { name: "防蟲噴霧*2", amount: 1222 },
+      { name: "Pure粥試用包", amount: 500 },
+      { name: "救生衣", amount: 2200 },
+      { name: "罐罐*11+零食6包", amount: 3838 },
+      { name: "幸手ドッグパーク(2人）", amount: 1200 },
+      { name: "乳酸菌90g*2", amount: 3872 },
+    ],
+    total: 73329,
+  },
+  "2025/07": {
+    month: "2025/07",
+    icon: "🌊",
+    items: [
+      { name: "刷牙水", amount: 1420 },
+      { name: "茨城ドッグラン", amount: 550 },
+      { name: "トモニードッグラン", amount: 1050 },
+      { name: "Amazon罐罐70g*48", amount: 2252 },
+      { name: "潔牙棒36根", amount: 1108 },
+      { name: "鞋鞋", amount: 2849 },
+      { name: "罐罐*41", amount: 5570 },
+      { name: "刷牙水", amount: 1420 },
+      { name: "娃娃車", amount: 15151 },
+      { name: "大便袋300枚*2", amount: 2948 },
+      { name: "幸手ドッグパーク(2人）", amount: 1200 },
+      { name: "折疊泳池", amount: 4490 },
+      { name: "毛巾", amount: 1216 },
+      { name: "涼感墊", amount: 2398 },
+      { name: "幸手ドッグパーク(1人）", amount: 1000 },
+      { name: "洗澡", amount: 8690 },
+      { name: "乳酸菌90g*2", amount: 3960 },
+      { name: "雞肉湯*2", amount: 712 },
+      { name: "洗澡濕巾*3", amount: 810 },
+      { name: "飛盤", amount: 819 },
+    ],
+    total: 59613,
+  },
+  "2025/08": {
+    month: "2025/08",
+    icon: "🍧",
+    items: [
+      { name: "アニモンダ罐罐*5", amount: 4485 },
+      { name: "背帶", amount: 2249 },
+      { name: "零食*5", amount: 1551 },
+      { name: "肌肉酸痛看醫生", amount: 14574 },
+      { name: "罐罐*10+霧島雞*3", amount: 2189 },
+      { name: "狗食コストコ", amount: 7998 },
+      { name: "ライオン牙膏40g", amount: 459 },
+      { name: "地瓜零食", amount: 949 },
+      { name: "零食*6+菜瓜布", amount: 1998 },
+      { name: "霧島雞*10", amount: 2788 },
+      { name: "肉球洗淨液", amount: 2299 },
+      { name: "魚油*2", amount: 2784 },
+      { name: "乳酸菌90g*2", amount: 3960 },
+      { name: "防滑墊18片", amount: 2560 },
+    ],
+    total: 50843,
+  },
+  "2025/09": {
+    month: "2025/09",
+    icon: "🍂",
+    items: [
+      { name: "ライオン牙膏40g", amount: 459 },
+      { name: "洗澡濕巾*4", amount: 1040 },
+      { name: "豬鼻+牛肺", amount: 826 },
+      { name: "J&C限定試吃包", amount: 1200 },
+      { name: "JW球球*2", amount: 3055 },
+      { name: "Pure粥*10", amount: 2980 },
+      { name: "罐罐*24+零食*2", amount: 4054 },
+      { name: "乳酸菌90g*2", amount: 3960 },
+      { name: "罐罐*36", amount: 4277 },
+    ],
+    total: 21851,
+  },
+  "2025/10": {
+    month: "2025/10",
+    icon: "🎃",
+    items: [
+      { name: "DBF雞肝*6", amount: 997 },
+      { name: "潔牙棒36根", amount: 1174 },
+      { name: "刷牙水", amount: 1567 },
+      { name: "看醫生打預防針", amount: 11990 },
+      { name: "洗澡濕巾*3", amount: 756 },
+      { name: "寵物濕巾640枚*2", amount: 1672 },
+      { name: "牛舌480g+北海道鮭魚30g", amount: 3014 },
+      { name: "DBF雞肝*6", amount: 997 },
+      { name: "狗食コストコ", amount: 7198 },
+      { name: "罐罐*9", amount: 1300 },
+      { name: "牽繩", amount: 628 },
+      { name: "胸背帶", amount: 2999 },
+      { name: "牛骨零食", amount: 584 },
+      { name: "蚤不到*6", amount: 3600 },
+      { name: "刷牙指套*3", amount: 1145 },
+      { name: "雨衣", amount: 3580 },
+      { name: "ちゅる80根", amount: 3160 },
+      { name: "罐罐*9", amount: 972 },
+      { name: "Pet'sOne粥*8", amount: 1024 },
+      { name: "狗草", amount: 398 },
+      { name: "洗澡", amount: 9020 },
+      { name: "零食*3", amount: 875 },
+      { name: "洗澡濕巾*3", amount: 756 },
+    ],
+    total: 59406,
+  },
+  "2025/11": {
+    month: "2025/11",
+    icon: "🍁",
+    items: [
+      { name: "ホテル4.5小時", amount: 3150 },
+      { name: "Hill's消化罐罐360g*12", amount: 5940 },
+      { name: "床床", amount: 6522 },
+      { name: "ホテル7.5小時", amount: 5250 },
+      { name: "Hill's腸道菌罐罐200g*12", amount: 5940 },
+      { name: "乳酸菌90g*2", amount: 3960 },
+      { name: "破壞王球球*2", amount: 1319 },
+      { name: "Hill's消化罐罐360g*12", amount: 5940 },
+      { name: "ライオン牙膏40g", amount: 515 },
+      { name: "洗澡濕巾*2", amount: 504 },
+      { name: "球球兩顆", amount: 1199 },
+      { name: "看醫生打狂犬病疫苗", amount: 2950 },
+      { name: "大便袋300枚", amount: 1764 },
+      { name: "Hill's腸道菌罐罐200g*12", amount: 4940 },
+      { name: "魚油*3", amount: 4369 },
+      { name: "雪衣", amount: 2889 },
+      { name: "ホテル1天（含接送）", amount: 8700 },
+    ],
+    total: 65851,
+  },
+  "2025/12": {
+    month: "2025/12",
+    icon: "⛄",
+    items: [
+      { name: "地墊*36", amount: 3920 },
+      { name: "零食*6", amount: 1128 },
+      { name: "洗澡", amount: 7920 },
+      { name: "Hill's消化罐罐360g*12", amount: 6120 },
+      { name: "乳酸菌90g*1", amount: 1960 },
+      { name: "Hill's腸道菌罐罐200g*12", amount: 4437 },
+      { name: "狗食コストコ", amount: 7998 },
+    ],
+    total: 33483,
+  },
+  "2026/01": {
+    month: "2026/01",
+    icon: "🎌",
+    items: [
+      { name: "住宿13天(12/22-1/4)", amount: 76200 },
+      { name: "Hill's腸道菌罐罐200g*12", amount: 4840 },
+      { name: "洗澡濕巾*3", amount: 684 },
+      { name: "乳酸菌90g*1", amount: 2660 },
+      { name: "韓國人參雞湯*12", amount: 2958 },
+      { name: "乳酸菌90g*1", amount: 2610 },
+      { name: "保険一年", amount: 68080 },
+      { name: "Hill's消化罐罐360g*12", amount: 6920 },
+    ],
+    total: 164952,
+  },
+  "2026/02": {
+    month: "2026/02",
+    icon: "🌸",
+    items: [
+      { name: "K9綠貽貝凍乾50g*2", amount: 5244 },
+      { name: "章魚玩具兩隻", amount: 1940 },
+      { name: "乳酸菌90g*1", amount: 2813 },
+      { name: "DBF雞肝*6", amount: 997 },
+      { name: "耳朵毛乾燥聽覺保護頭套", amount: 2613 },
+      { name: "耳垢清潔指套30枚", amount: 244 },
+      { name: "芋零食520g", amount: 932 },
+      { name: "車用固定墊", amount: 5980 },
+      { name: "寵物店零食玩具", amount: 3335 },
+      { name: "DBF雞肝*6", amount: 1000 },
+    ],
+    total: 25098,
+  },
+  "2026/03": {
+    month: "2026/03",
+    icon: "🌷",
+    items: [
+      { name: "乳酸菌90g*1", amount: 2610 },
+      { name: "大便袋300枚", amount: 1786 },
+      { name: "Nutro罐罐サーモン100g*24", amount: 5312 },
+      { name: "Nutro罐罐綜合100g*24", amount: 4915 },
+      { name: "狗食コストコ", amount: 8898 },
+      { name: "Loa-Pet犬用shampoo400mL", amount: 1180 },
+      { name: "乳酸菌90g*1", amount: 2726 },
+      { name: "體內驅蟲藥ドロンタールプラス20錠", amount: 7749 },
+      { name: "玩具環", amount: 1600 },
+      { name: "ライオン牙膏40g", amount: 468 },
+      { name: "齒垢清潔指套", amount: 271 },
+      { name: "洗澡濕巾*4", amount: 912 },
+      { name: "零食", amount: 919 },
+      { name: "住宿5天(3/20-3/25)", amount: 38850 },
+      { name: "ココグルメ試吃包", amount: 980 },
+      { name: "除菌濕巾960枚", amount: 1708 },
+      { name: "潔牙棒36根", amount: 1381 },
+    ],
+    total: 82265,
+  },
+  "2026/04": {
+    month: "2026/04",
+    icon: "🌼",
+    items: [
+      { name: "寵物展門票1人2天", amount: 4820 },
+      { name: "[寵物展]球球", amount: 1500 },
+      { name: "[寵物展]北海道小零食3種", amount: 1000 },
+      { name: "[寵物展]魚油150ml*2", amount: 4000 },
+      { name: "[寵物展]ZIWI小零食*3", amount: 3520 },
+      { name: "[寵物展]咖啡樹磨牙棒", amount: 2200 },
+      { name: "[寵物展]潔牙零食", amount: 1000 },
+      { name: "[寵物展]磨牙棒*6", amount: 500 },
+      { name: "[寵物展]球球", amount: 1500 },
+      { name: "[寵物展]Zeal綠貽貝50g*2", amount: 2500 },
+      { name: "[寵物展]Butch肉腸800g*4", amount: 6000 },
+      { name: "[寵物展]フォーキャンスデンティ*3", amount: 1000 },
+      { name: "乳酸菌90g*2", amount: 4810 },
+      { name: "フォーキャンスデンティ*11", amount: 4037 },
+      { name: "除菌濕巾1280枚", amount: 2070 },
+      { name: "ライオン牙膏40g", amount: 468 },
+      { name: "齒垢清潔指套", amount: 255 },
+      { name: "Nutro罐罐綜合100g*24", amount: 4160 },
+      { name: "住宿6天(4/24-4/30)", amount: 42950 },
+    ],
+    total: 88290,
+  },
+  "2026/05": {
+    month: "2026/05",
+    icon: "🐾",
+    items: [
+      { name: "防蟲噴霧", amount: 848 },
+      { name: "乳酸菌90g*2", amount: 4090 },
+      { name: "狗食コストコ", amount: 8898 },
+      { name: "住宿3天(5/7-5/10)", amount: 20500 },
+      { name: "Butch肉腸2kg*3", amount: 8910 },
+    ],
+    total: 43246,
+  },
+};
+
+// Price tracking data for recurring items
+const PRICE_HISTORY = {
+  // ── 乳酸菌（每90g單價） ──
+  // *2 → 各自除2；*1 → 直接原價
+  "乳酸菌(每90g單價)": [
+    { month: "2025/01", price: Math.round(3400 / 2) },   // *2 → 1700
+    { month: "2025/02", price: Math.round(4468 / 2) },   // *2 → 2234
+    { month: "2025/03", price: Math.round(4400 / 2) },   // *2 → 2200
+    { month: "2025/04", price: Math.round(4284 / 2) },   // *2 → 2142
+    { month: "2025/05", price: Math.round(4268 / 2) },   // *2 → 2134
+    { month: "2025/06(a)", price: Math.round(4356 / 2) },// *2 → 2178
+    { month: "2025/06(b)", price: Math.round(3872 / 2) },// *2 → 1936
+    { month: "2025/07", price: Math.round(3960 / 2) },   // *2 → 1980
+    { month: "2025/08", price: Math.round(3960 / 2) },   // *2 → 1980
+    { month: "2025/09", price: Math.round(3960 / 2) },   // *2 → 1980
+    { month: "2025/11", price: Math.round(3960 / 2) },   // *2 → 1980
+    { month: "2025/12", price: 1960 },                   // *1
+    { month: "2026/01(a)", price: 2660 },                 // *1
+    { month: "2026/01(b)", price: 2610 },                 // *1
+    { month: "2026/02", price: 2813 },                   // *1
+    { month: "2026/03(a)", price: 2610 },                 // *1
+    { month: "2026/03(b)", price: 2726 },                 // *1
+    { month: "2026/04", price: Math.round(4810 / 2) },   // *2 → 2405
+    { month: "2026/05", price: Math.round(4090 / 2) },   // *2 → 2045
+  ],
+  // ── 罐罐/狗食 ──
+  "狗食コストコ": [
+    { month: "2024/12", price: 7998 },
+    { month: "2025/03", price: 7668 },
+    { month: "2025/06", price: 7668 },
+    { month: "2025/08", price: 7998 },
+    { month: "2025/10", price: 7198 },
+    { month: "2025/12", price: 7998 },
+    { month: "2026/03", price: 8898 },
+    { month: "2026/05", price: 8898 },
+  ],
+  "Hill's消化罐360g*12": [
+    { month: "2025/11(a)", price: 5940 },
+    { month: "2025/11(b)", price: 5940 },
+    { month: "2025/12", price: 6120 },
+    { month: "2026/01", price: 6920 },
+  ],
+  "Hill's腸道菌罐200g*12": [
+    { month: "2025/11(a)", price: 5940 },
+    { month: "2025/11(b)", price: 4940 },
+    { month: "2025/12", price: 4437 },
+    { month: "2026/01", price: 4840 },
+  ],
+  // ── 口腔護理 ──
+  "ライオン牙膏40g": [
+    { month: "2025/08", price: 459 },
+    { month: "2025/09", price: 459 },
+    { month: "2025/11", price: 515 },
+    { month: "2026/03", price: 468 },
+    { month: "2026/04", price: 468 },
+  ],
+  "潔牙棒36根": [
+    { month: "2025/03", price: 1175 },
+    { month: "2025/07", price: 1108 },
+    { month: "2025/10", price: 1174 },
+    { month: "2026/03", price: 1381 },
+  ],
+  // 刷牙水：同月買兩次說明換品牌或補貨，只留不同價格的時間點
+  "刷牙水": [
+    { month: "2025/05", price: 1881 },
+    { month: "2025/06", price: 1881 },
+    { month: "2025/07", price: 1420 }, // 降價
+    { month: "2025/10", price: 1567 },
+  ],
+  // ── 尿墊/大便袋 ──
+
+  // 大便袋：統一換算成「每100枚單價」方便比較
+  "大便袋(每100枚單價)": [
+    { month: "2025/01", price: 1410 },
+    { month: "2025/02", price: 1640 },
+    { month: "2025/05", price: 1918 },
+    { month: "2025/07", price: Math.round(2948 / 2) }, // 300枚*2 → 1474/包
+    { month: "2025/11", price: 1764 },  // 300枚
+    { month: "2026/03", price: 1786 },  // 300枚
+  ],
+  // ── 洗澡濕巾（每包單價）──
+  // 2025/02 是「樂天零食+洗澡濕巾*3 4105」無法拆分，跳過
+  "洗澡濕巾(每包單價)": [
+    { month: "2024/12", price: Math.round(708/3) },    // *3 → 236
+    { month: "2025/01", price: Math.round(708/3) },    // *3 → 236
+    { month: "2025/04", price: Math.round(810/3) },    // *3 → 270
+    { month: "2025/05(a)", price: Math.round(810/3) }, // *3 → 270
+    { month: "2025/05(b)", price: Math.round(540/2) }, // *2 → 270
+    { month: "2025/06", price: Math.round(810/3) },    // *3 → 270
+    { month: "2025/07", price: Math.round(810/3) },    // *3 → 270
+    { month: "2025/09", price: Math.round(1040/4) },   // *4 → 260
+    { month: "2025/10(a)", price: Math.round(756/3) }, // *3 → 252
+    { month: "2025/10(b)", price: Math.round(756/3) }, // *3 → 252
+    { month: "2025/11", price: Math.round(504/2) },    // *2 → 252
+    { month: "2026/01", price: Math.round(684/3) },    // *3 → 228
+    { month: "2026/03", price: Math.round(912/4) },    // *4 → 228
+    { month: "2026/04", price: Math.round(810/3) },    // *3 → 270
+  ],
+
+  // ── 住宿費(每晚均價) ──
+  "住宿費(每晚均價)": [
+    { month: "2026/01(13晚)", price: Math.round(76200 / 13) },
+    { month: "2026/03(5晚)", price: Math.round(38850 / 5) },
+    { month: "2026/04(6晚)", price: Math.round(42950 / 6) },
+    { month: "2026/05(3晚)", price: Math.round(20500 / 3) },
+  ],
+  // ── 其他常購 ──
+  // DHC魚油：統一換算每包單價
+  "DHC魚油(每包單價)": [
+    { month: "2025/01", price: 1382 },          // *1
+    { month: "2025/02", price: 1299 },          // *1
+    { month: "2025/03", price: 1313 },          // *1
+    { month: "2025/06", price: Math.round(4200 / 3) }, // *3 → 1400
+    { month: "2025/08", price: Math.round(2784 / 2) }, // *2 → 1392
+    { month: "2025/11", price: Math.round(4369 / 3) }, // *3 → 1456
+  ],
+
+  "洗澡": [
+    { month: "2025/02", price: 8580 },
+    { month: "2025/04", price: 8580 },
+    { month: "2025/05", price: 10780 },
+    { month: "2025/07", price: 8690 },
+    { month: "2025/10", price: 9020 },
+    { month: "2025/12", price: 7920 },
+  ],
+  // ドロンタールプラス20錠（整盒20錠）
+  "ドロンタールプラス20錠": [
+    { month: "2025/03", price: 7792 },
+    { month: "2026/03", price: 7749 },
+  ],
+  // DBF雞肝（每包單價，原始皆為*6購入）
+  "DBF雞肝(每包單價)": [
+    { month: "2025/10(a)", price: Math.round(997 / 6) },  // *6 → 166
+    { month: "2025/10(b)", price: Math.round(997 / 6) },  // *6 → 166
+    { month: "2026/02(a)", price: Math.round(997 / 6) },  // *6 → 166
+    { month: "2026/02(b)", price: Math.round(1000 / 6) }, // *6 → 167
+  ],
+  // フォーキャンスデンティ（每包單價）
+  "フォーキャンスデンティ(每包)": [
+    { month: "2026/04寵物展*3", price: Math.round(1000 / 3) },  // → 333
+    { month: "2026/04*11", price: Math.round(4037 / 11) },       // → 367
+  ],
+  // Butch肉腸（每100g單價）
+  "Butch肉腸(每100g)": [
+    { month: "2026/04寵物展", price: Math.round(6000 / (800 * 4) * 100) },  // 800g*4 → ¥19/100g
+    { month: "2026/05", price: Math.round(8910 / (2000 * 3) * 100) },        // 2kg*3 → ¥15/100g
+  ],
+};
+
+const PRICE_CATEGORIES = {
+  "乳酸菌": ["乳酸菌(每90g單價)"],
+  "罐罐/狗食": ["狗食コストコ", "Hill's消化罐360g*12", "Hill's腸道菌罐200g*12"],
+  "口腔護理": ["ライオン牙膏40g", "潔牙棒36根", "刷牙水"],
+  "尿墊/大便袋": ["大便袋(每100枚單價)"],
+  "洗澡濕巾": ["洗澡濕巾(每包單價)"],
+
+  "住宿費": ["住宿費(每晚均價)"],
+  "其他": ["DHC魚油(每包單價)", "洗澡", "ドロンタールプラス20錠", "DBF雞肝(每包單價)", "フォーキャンスデンティ(每包)", "Butch肉腸(每100g)"],
+};
+
+const MONTH_ORDER = [
+  "狗體", "保険一年(2024)",
+  "2024/12",
+  "2025/01","2025/02","2025/03","2025/04","2025/05","2025/06",
+  "2025/07","2025/08","2025/09","2025/10","2025/11","2025/12",
+  "2026/01","2026/02","2026/03","2026/04","2026/05",
+];
+
+// Maps item name keywords → { trackKey, divisor }
+// divisor: how many units to divide by (e.g. *2 pack → 2)
+const TRACK_MAP = [
+  // 乳酸菌：*N → 自動除以N包，單包=90g
+  { match: /乳酸菌.*[*×]\d/,       trackKey: "乳酸菌(每90g單價)",          divisor: "auto" },
+  { match: /乳酸菌/,               trackKey: "乳酸菌(每90g單價)",          divisor: 1 },
+  // 魚油：*N → 自動除以N包
+  { match: /魚油/,                 trackKey: "DHC魚油(每包單價)",           divisor: "auto" },
+  // Hill's 罐罐
+  { match: /Hill.s消化罐.*360/,    trackKey: "Hill's消化罐360g*12",        divisor: 1 },
+  { match: /Hill.s腸道菌罐.*200/,  trackKey: "Hill's腸道菌罐200g*12",      divisor: 1 },
+  // 狗食
+  { match: /狗食コストコ/,          trackKey: "狗食コストコ",               divisor: 1 },
+  // 洗澡（不含濕巾）
+  { match: /洗澡(?!濕巾)/,         trackKey: "洗澡",                       divisor: 1 },
+  // 洗澡濕巾：*N → 自動除以N包
+  { match: /洗澡濕巾/,             trackKey: "洗澡濕巾(每包單價)",          divisor: "auto" },
+  // 口腔護理
+  { match: /潔牙棒/,               trackKey: "潔牙棒36根",                 divisor: 1 },
+  { match: /刷牙水/,               trackKey: "刷牙水",                     divisor: 1 },
+  { match: /ライオン牙膏/,          trackKey: "ライオン牙膏40g",            divisor: 1 },
+  // 大便袋：從枚數自動算每100枚單價
+  { match: /大便袋\d+枚.*[*×]\d/,  trackKey: "大便袋(每100枚單價)",        divisor: "auto_bag_multi" },
+  { match: /大便袋\d+枚/,          trackKey: "大便袋(每100枚單價)",        divisor: "auto_bag" },
+  { match: /大便袋/,               trackKey: "大便袋(每100枚單價)",        divisor: 1 },
+  // DBF雞肝：*N → 自動除以N包
+  { match: /DBF雞肝/,              trackKey: "DBF雞肝(每包單價)",          divisor: "auto" },
+  // フォーキャンス：*N → 自動除以N包
+  { match: /フォーキャンス/,        trackKey: "フォーキャンスデンティ(每包)", divisor: "auto" },
+  // 驅蟲藥
+  { match: /ドロンタール/,          trackKey: "ドロンタールプラス20錠",     divisor: 1 },
+  // Butch肉腸：從重量自動算每100g
+  { match: /Butch/,                trackKey: "Butch肉腸(每100g)",          divisor: "auto_per100g" },
+  // 蚤不到：*N → 自動除以N個
+  { match: /蚤不到/,               trackKey: "蚤不到",                     divisor: "auto" },
+];
+
+// Parse quantity multiplier from name: "*3" → 3, "90g*2" → 2, "2kg*3" → 3
+function parseMultiplier(name) {
+  // Match trailing *N or ×N
+  const m = name.match(/[*×](\d+)\s*$/);
+  return m ? parseInt(m[1]) : 1;
+}
+
+// Parse gram/weight total from Butch-style names e.g. "800g*4" → 3200, "2kg*3" → 6000
+function parseGrams(name) {
+  const kg = name.match(/(\d+(?:\.\d+)?)kg\s*[*×]\s*(\d+)/);
+  if (kg) return parseFloat(kg[1]) * 1000 * parseInt(kg[2]);
+  const gm = name.match(/(\d+)g\s*[*×]\s*(\d+)/);
+  if (gm) return parseInt(gm[1]) * parseInt(gm[2]);
+  const kgOnly = name.match(/(\d+(?:\.\d+)?)kg/);
+  if (kgOnly) return parseFloat(kgOnly[1]) * 1000;
+  const gOnly = name.match(/(\d+)g/);
+  if (gOnly) return parseInt(gOnly[1]);
+  return null;
+}
+
+function getTrackInfo(name) {
+  for (const rule of TRACK_MAP) {
+    if (rule.match.test(name)) {
+      let divisor = rule.divisor;
+
+      if (divisor === "auto") {
+        // General: parse *N multiplier from name
+        divisor = parseMultiplier(name);
+      } else if (divisor === "auto_bag_multi") {
+        const m = name.match(/(\d+)枚\s*[*×]\s*(\d+)/);
+        divisor = m ? Math.round(parseInt(m[1]) * parseInt(m[2]) / 100) : 1;
+      } else if (divisor === "auto_bag") {
+        const m = name.match(/(\d+)枚/);
+        divisor = m ? Math.round(parseInt(m[1]) / 100) : 1;
+      } else if (divisor === "auto_per100g") {
+        // Butch etc: total grams / 100
+        const grams = parseGrams(name);
+        divisor = grams ? Math.round(grams / 100) : 1;
+      }
+
+      return { ...rule, divisor: Math.max(1, divisor) };
+    }
+  }
+  return null;
+}
+
+const COLORS = {
+  bg: "#fdf6f0",
+  card: "#ffffff",
+  cardBorder: "#f0e0d6",
+  accent: "#e8847a",
+  accentSoft: "rgba(232,132,122,0.12)",
+  accent2: "#f0a896",
+  text: "#3d2c2c",
+  muted: "#b08080",
+  green: "#7bbf8e",
+  red: "#d96b6b",
+  blue: "#7aace8",
+  headerBg: "#fff0eb",
+  navBg: "#fff8f5",
+  chartLine: "#e8847a",
+};
+
+function fmt(n) {
+  return "¥" + n.toLocaleString();
+}
+
+function App() {
+  const [view, setView] = useState("overview"); // overview | month | price | add
+  const [selectedMonth, setSelectedMonth] = useState(null);
+  const [selectedItem, setSelectedItem] = useState(null);
+  const [newEntry, setNewEntry] = useState({ month: "", name: "", amount: "", qty: "1", trackPrice: false, isHotel: false, nights: "", trackTarget: "" });
+  const [userPriceHistory, setUserPriceHistory] = useState({});
+  const [editingItem, setEditingItem] = useState(null); // { index } for month detail
+  const [editingItemVal, setEditingItemVal] = useState({ name: '', amount: '' });
+  const [editingPriceItem, setEditingPriceItem] = useState(null); // { item, index }
+  const [editingPriceVal, setEditingPriceVal] = useState("");
+  const [addingManualPrice, setAddingManualPrice] = useState(false);
+  const [manualPrice, setManualPrice] = useState({ name: "", month: "", price: "", qty: "1" });
+  const [data, setData] = useState(ALL_DATA);
+  const fbNewItems = useRef(db.ref("newItems"));
+  const fbPriceEntries = useRef(db.ref("priceEntries"));
+  const fbPriceKeyAliases = useRef(db.ref("priceKeyAliases"));
+
+  // Load persisted new items from Firebase on mount
+  useEffect(() => {
+    fbNewItems.current.once("value").then(snap => {
+      const saved = snap.val();
+      if (!saved) return;
+      // saved is either array (legacy) or object with push keys
+      // Normalize into array of { fbId, month, name, amount }
+      let items;
+      if (Array.isArray(saved)) {
+        // Legacy: no real fbId, fall back to index as id (not ideal but readable)
+        items = saved
+          .map((v, i) => v ? { ...v, fbId: String(i) } : null)
+          .filter(Boolean);
+      } else {
+        items = Object.entries(saved).map(([id, v]) => ({ ...v, fbId: id }));
+      }
+      setData(prev => {
+        let next = { ...prev };
+        items.forEach(({ fbId, month, name, amount }) => {
+          if (!month || !name || !amount) return;
+          const existing = next[month];
+          const newItem = { name, amount, fbId };
+          if (existing) {
+            next[month] = { ...existing, items: [...existing.items, newItem], total: existing.total + amount };
+          } else {
+            next[month] = { month, icon: "📝", items: [newItem], total: amount };
+          }
+        });
+        return next;
+      });
+    }).catch(e => console.warn("Load newItems error:", e));
+
+    // Load price tracking entries
+    fbPriceEntries.current.once("value").then(snap => {
+      const saved = snap.val();
+      if (!saved) return;
+      const entries = Object.entries(saved || {});
+      setUserPriceHistory(prev => {
+        const next = { ...prev };
+        entries.forEach(([id, entry]) => {
+          const { trackKey, month, price, divisor, sourceMonth, sourceItemIndex, sourceItemFbId, sourceItemName } = entry || {};
+          if (!trackKey || !month) return;
+          next[trackKey] = [...(next[trackKey] || []), { id, month, price, divisor, sourceMonth, sourceItemIndex, sourceItemFbId, sourceItemName }];
+        });
+        return next;
+      });
+      setVisibleItems(prev => {
+        const next = new Set([...prev]);
+        entries.forEach(([_, entry]) => {
+          if (entry?.trackKey) next.add(entry.trackKey);
+        });
+        return next;
+      });
+    }).catch(e => console.warn("Load priceEntries error:", e));
+
+    fbPriceKeyAliases.current.once("value").then(snap => {
+      const saved = snap.val();
+      if (saved && typeof saved === "object") setPriceKeyAliases(saved);
+    }).catch(e => console.warn("Load aliases error:", e));
+  }, []);
+
+  const months = MONTH_ORDER.filter(m => data[m]);
+  const regularMonths = months.filter(m => !data[m].isSetup);
+
+  const grandTotal = useMemo(() => months.reduce((s, m) => s + data[m].total, 0), [data, months]);
+  const regularTotal = useMemo(() => regularMonths.reduce((s, m) => s + data[m].total, 0), [data, regularMonths]);
+
+  const chartData = useMemo(() =>
+    regularMonths.map(m => ({ month: m, total: data[m].total })),
+    [data, regularMonths]
+  );
+
+  const priceItems = Object.keys(PRICE_HISTORY);
+  const [userCategories, setUserCategories] = useState(PRICE_CATEGORIES);
+  const [visibleItems, setVisibleItems] = useState(new Set(Object.keys(PRICE_HISTORY)));
+  const [editingCats, setEditingCats] = useState(false);
+  const [newCatName, setNewCatName] = useState("");
+  const [addingItemToCat, setAddingItemToCat] = useState(null); // category name
+  const [newItemForCat, setNewItemForCat] = useState("");
+  const [editingPriceKey, setEditingPriceKey] = useState(null);
+  const [editingPriceKeyVal, setEditingPriceKeyVal] = useState("");
+  const [priceKeyAliases, setPriceKeyAliases] = useState({});
+
+  function toggleItem(item) {
+    setVisibleItems(prev => {
+      const next = new Set(prev);
+      if (next.has(item)) next.delete(item); else next.add(item);
+      return next;
+    });
+  }
+
+  function addCategory() {
+    const name = newCatName.trim();
+    if (!name || userCategories[name]) return;
+    setUserCategories(prev => ({ ...prev, [name]: [] }));
+    setNewCatName("");
+  }
+
+  function deleteCategory(cat) {
+    setUserCategories(prev => {
+      const next = { ...prev };
+      delete next[cat];
+      return next;
+    });
+    if (priceCategory === cat) setPriceCategory("全部");
+  }
+
+  function addItemToCategory(cat, itemName) {
+    const name = itemName.trim();
+    if (!name || !PRICE_HISTORY[name]) return;
+    setUserCategories(prev => ({
+      ...prev,
+      [cat]: prev[cat].includes(name) ? prev[cat] : [...prev[cat], name],
+    }));
+    setAddingItemToCat(null);
+    setNewItemForCat("");
+  }
+
+  function removeItemFromCategory(cat, item) {
+    setUserCategories(prev => ({
+      ...prev,
+      [cat]: prev[cat].filter(i => i !== item),
+    }));
+  }
+
+  // All entries are editable - builtin ones get overrides stored in userPriceOverrides
+  // We store overrides as { [item]: { [index]: { price?, deleted? } } }
+  const [priceOverrides, setPriceOverrides] = useState({});
+
+  function renamePriceKey(oldKey, newKey) {
+    const trimmed = newKey.trim();
+    if (!trimmed || trimmed === oldKey) return;
+    const isBuiltin = !!PRICE_HISTORY[oldKey];
+    if (isBuiltin) {
+      setPriceKeyAliases(prev => {
+        const origKey = Object.keys(prev).find(k => prev[k] === oldKey) || oldKey;
+        const next = { ...prev, [origKey]: trimmed };
+        fbPriceKeyAliases.current.set(next).catch(err => console.warn(err));
+        return next;
+      });
+      setPriceOverrides(prev => {
+        const next = { ...prev };
+        if (next[oldKey]) { next[trimmed] = next[oldKey]; delete next[oldKey]; }
+        return next;
+      });
+    }
+    setUserPriceHistory(prev => {
+      const next = { ...prev };
+      const arr = (next[oldKey] || []).map(e => {
+        const updated = { ...e, trackKey: trimmed };
+        if (e.id) {
+          const { id, ...toSave } = updated;
+          fbPriceEntries.current.child(id).set(toSave).catch(err => console.warn(err));
+        }
+        return updated;
+      });
+      if (arr.length) next[trimmed] = [...(next[trimmed] || []), ...arr];
+      delete next[oldKey];
+      return next;
+    });
+    setUserCategories(prev => {
+      const next = {};
+      Object.entries(prev).forEach(([cat, items]) => {
+        next[cat] = items.map(i => i === oldKey ? trimmed : i);
+      });
+      return next;
+    });
+    if (selectedItem === oldKey) setSelectedItem(trimmed);
+    if (priceCategory === oldKey) setPriceCategory(trimmed);
+    setEditingPriceKey(null);
+    setEditingPriceKeyVal("");
+  }
+
+  function isUserEntry(item, index) {
+    return true; // all entries now editable
+  }
+
+  function deleteUserPriceEntry(item, index) {
+    const builtinCount = (PRICE_HISTORY[item] || []).length;
+    if (index < builtinCount) {
+      // Mark builtin entry as deleted via override
+      setPriceOverrides(prev => ({
+        ...prev,
+        [item]: { ...(prev[item] || {}), [index]: { deleted: true } },
+      }));
+    } else {
+      // Remove from userPriceHistory + Firebase
+      const userIdx = index - builtinCount;
+      const entry = (userPriceHistory[item] || [])[userIdx];
+      if (entry?.id) {
+        fbPriceEntries.current.child(entry.id).remove()
+          .catch(e => console.warn("Remove priceEntry error:", e));
+      }
+      setUserPriceHistory(prev => ({
+        ...prev,
+        [item]: (prev[item] || []).filter((_, i) => i !== userIdx),
+      }));
+    }
+  }
+
+  function updateUserPriceEntry(item, index, newPrice) {
+    const val = parseInt(newPrice);
+    if (isNaN(val)) return;
+    const builtinCount = (PRICE_HISTORY[item] || []).length;
+    if (index < builtinCount) {
+      // Override builtin entry - no monthly data to sync (builtin has no source link)
+      setPriceOverrides(prev => ({
+        ...prev,
+        [item]: { ...(prev[item] || {}), [index]: { price: val } },
+      }));
+    } else {
+      const userIdx = index - builtinCount;
+      // Get the entry to find source link
+      const entry = (userPriceHistory[item] || [])[userIdx];
+      const divisor = entry?.divisor || 1;
+      const newTotal = val * divisor;
+
+      setUserPriceHistory(prev => {
+        const updatedList = (prev[item] || []).map((e, i) => {
+          if (i !== userIdx) return e;
+          const updatedEntry = { ...e, price: val };
+          // Sync to Firebase
+          if (e.id) {
+            const { id, ...toSave } = updatedEntry;
+            fbPriceEntries.current.child(id).set(toSave)
+              .catch(err => console.warn("Update priceEntry error:", err));
+          }
+          return updatedEntry;
+        });
+        return { ...prev, [item]: updatedList };
+      });
+
+      // Sync back to monthly data if this entry has a source link
+      if (entry?.sourceMonth && (entry?.sourceItemFbId || entry?.sourceItemIndex !== undefined)) {
+        setData(prev => {
+          const month = prev[entry.sourceMonth];
+          if (!month) return prev;
+          // Find target item: prefer fbId match, fall back to index
+          let targetIdx = -1;
+          if (entry.sourceItemFbId) {
+            targetIdx = month.items.findIndex(it => it.fbId === entry.sourceItemFbId);
+          }
+          if (targetIdx === -1 && entry.sourceItemIndex !== undefined) {
+            targetIdx = entry.sourceItemIndex;
+          }
+          if (targetIdx < 0 || !month.items[targetIdx]) return prev;
+          const targetItem = month.items[targetIdx];
+          const oldAmt = targetItem.amount;
+          const newItems = month.items.map((it, i) =>
+            i === targetIdx ? { ...it, amount: newTotal } : it
+          );
+          // Sync newItem to Firebase if it has fbId
+          if (targetItem.fbId) {
+            fbNewItems.current.child(targetItem.fbId).set({ month: entry.sourceMonth, name: targetItem.name, amount: newTotal })
+              .catch(err => console.warn("Update newItem error:", err));
+          }
+          return { ...prev, [entry.sourceMonth]: { ...month, items: newItems, total: month.total - oldAmt + newTotal } };
+        });
+      }
+    }
+    setEditingPriceItem(null);
+    setEditingPriceVal("");
+  }
+
+  function editMonthItem(index, newName, newAmount) {
+    const amt = parseInt(newAmount);
+    if (!newName || isNaN(amt)) return;
+    const month = data[selectedMonth];
+    if (!month) return;
+    const item = month.items[index];
+    if (!item) return;
+    const itemFbId = item.fbId;
+
+    // 1. Update Firebase newItem if it has fbId (user-added items only)
+    if (itemFbId) {
+      fbNewItems.current.child(itemFbId).set({ month: selectedMonth, name: newName, amount: amt })
+        .catch(e => console.warn("Update newItem error:", e));
+    }
+
+    // 2. Update monthly data (local state)
+    setData(prev => {
+      const m = prev[selectedMonth];
+      const oldAmt = m.items[index].amount;
+      const newItems = m.items.map((it, i) => i === index ? { ...it, name: newName, amount: amt } : it);
+      return { ...prev, [selectedMonth]: { ...m, items: newItems, total: m.total - oldAmt + amt } };
+    });
+
+    // 3. Sync to price tracking: find any userPriceHistory entry linked to this item
+    setUserPriceHistory(prev => {
+      const updated = { ...prev };
+      Object.entries(updated).forEach(([key, entries]) => {
+        updated[key] = entries.map(e => {
+          const matchByFbId = itemFbId && e.sourceItemFbId === itemFbId;
+          const matchByIndex = !itemFbId && e.sourceMonth === selectedMonth && e.sourceItemIndex === index;
+          if (matchByFbId || matchByIndex) {
+            const divisor = e.divisor || 1;
+            const newPrice = Math.round(amt / divisor);
+            const updatedEntry = { ...e, price: newPrice, sourceItemName: newName };
+            // Push to Firebase as well
+            if (e.id) {
+              const { id, ...toSave } = updatedEntry;
+              fbPriceEntries.current.child(id).set(toSave)
+                .catch(err => console.warn("Update priceEntry error:", err));
+            }
+            return updatedEntry;
+          }
+          return e;
+        });
+      });
+      return updated;
+    });
+    setEditingItem(null);
+  }
+function deleteMonthItem(index) {
+  const month = data[selectedMonth];
+  if (!month) return;
+  const item = month.items[index];
+  if (!item) return;
+
+  const oldAmt = item.amount;
+  const itemFbId = item.fbId;
+  const autoInfo = getTrackInfo(item.name);
+  const key = autoInfo ? autoInfo.trackKey : item.name;
+
+  // 1. Delete the newItem from Firebase if it has an fbId (i.e. was user-added)
+  if (itemFbId) {
+    fbNewItems.current.child(itemFbId).remove()
+      .catch(e => console.warn("Remove newItem error:", e));
+  }
+
+  // 2. Delete any linked priceEntries from Firebase (match by sourceItemFbId, fall back to selectedMonth + index)
+  Object.entries(userPriceHistory).forEach(([k, entries]) => {
+    entries.forEach(e => {
+      const matchByFbId = itemFbId && e.sourceItemFbId === itemFbId;
+      const matchByIndex = !itemFbId && e.sourceMonth === selectedMonth && e.sourceItemIndex === index;
+      if ((matchByFbId || matchByIndex) && e.id) {
+        fbPriceEntries.current.child(e.id).remove()
+          .catch(err => console.warn("Remove priceEntry error:", err));
+      }
+    });
+  });
+
+  // 3. Update local state
+  setData(prev => {
+    const m = prev[selectedMonth];
+    if (!m) return prev;
+    const newItems = m.items.filter((_, i) => i !== index);
+    return {
+      ...prev,
+      [selectedMonth]: {
+        ...m,
+        items: newItems,
+        total: m.total - oldAmt,
+      },
+    };
+  });
+
+  setUserPriceHistory(ph => {
+    const next = { ...ph };
+    Object.keys(next).forEach(k => {
+      next[k] = next[k].filter(e => {
+        const matchByFbId = itemFbId && e.sourceItemFbId === itemFbId;
+        const matchByIndex = !itemFbId && e.sourceMonth === selectedMonth && e.sourceItemIndex === index;
+        return !(matchByFbId || matchByIndex);
+      });
+      if (next[k].length === 0) delete next[k];
+    });
+    return next;
+  });
+}
+
+  function addManualPriceEntry() {
+    const name = manualPrice.name.trim();
+    const month = manualPrice.month.trim();
+    const total = parseInt(manualPrice.price);
+    const qty = Math.max(1, parseInt(manualPrice.qty) || 1);
+    if (!name || !month || isNaN(total)) return;
+    const unitPrice = Math.round(total / qty);
+    const newRef = fbPriceEntries.current.push();
+    const priceId = newRef.key;
+    const priceEntry = { trackKey: name, month, price: unitPrice };
+    setUserPriceHistory(prev => ({
+      ...prev,
+      [name]: [...(prev[name] || []), { id: priceId, ...priceEntry }],
+    }));
+    setVisibleItems(prev => new Set([...prev, name]));
+    newRef.set(priceEntry).catch(e => console.warn("Save price entry error:", e));
+    setManualPrice({ name: "", month: "", price: "", qty: "1" });
+    setAddingManualPrice(false);
+  }
+
+  // Add item from monthly detail into price tracking
+  function addMonthItemToTracking(itemName, amount, month, itemIndex) {
+    const autoInfo = getTrackInfo(itemName);
+    const key = autoInfo ? autoInfo.trackKey : itemName;
+    const divisor = autoInfo ? autoInfo.divisor : 1;
+    const unitPrice = Math.round(amount / divisor);
+    // Find fbId from the actual local item if possible
+    const sourceItem = (data[month]?.items || [])[itemIndex];
+    const sourceItemFbId = sourceItem?.fbId;
+    const newRef = fbPriceEntries.current.push();
+    const priceId = newRef.key;
+    const priceEntry = { trackKey: key, month, price: unitPrice, divisor, sourceMonth: month, sourceItemIndex: itemIndex, sourceItemFbId, sourceItemName: itemName };
+    setUserPriceHistory(prev => ({
+      ...prev,
+      [key]: [...(prev[key] || []), { id: priceId, ...priceEntry }],
+    }));
+    setVisibleItems(prev => new Set([...prev, key]));
+    newRef.set(priceEntry).catch(e => console.warn("Save price entry error:", e));
+  }
+
+  function handleAddEntry() {
+    if (!newEntry.month || !newEntry.name || !newEntry.amount) return;
+    const amount = parseInt(newEntry.amount);
+    if (isNaN(amount)) return;
+    const qty = Math.max(1, parseInt(newEntry.qty) || 1);
+    const nights = Math.max(1, parseInt(newEntry.nights) || 1);
+
+    // Pre-allocate a Firebase push key so local state and Firebase share the same id
+    const newItemRef = fbNewItems.current.push();
+    const fbId = newItemRef.key;
+
+    // Add to monthly data (local state) — include fbId so we can delete it later
+    setData(prev => {
+      const existing = prev[newEntry.month];
+      if (existing) {
+        return { ...prev, [newEntry.month]: { ...existing, items: [...existing.items, { name: newEntry.name, amount, fbId }], total: existing.total + amount } };
+      } else {
+        return { ...prev, [newEntry.month]: { month: newEntry.month, icon: "📝", items: [{ name: newEntry.name, amount, fbId }], total: amount } };
+      }
+    });
+    // Save to Firebase (under the pre-allocated key)
+    newItemRef.set({ month: newEntry.month, name: newEntry.name, amount })
+      .then(() => console.log("✅ Saved to Firebase"))
+      .catch(e => { console.error("❌ Firebase error:", e); alert("保存失敗: " + e.message); });
+    // For source link, prefer fbId (stable) over index (shifts on delete)
+    const monthItems = (data[newEntry.month]?.items || []);
+    const itemIndex = monthItems.length; // newly added item will be at this index
+    // Hotel mode: always track as 住宿費(每晚均價)
+    if (newEntry.isHotel) {
+      const perNight = Math.round(amount / nights);
+      const label = `${newEntry.month}(${nights}晚)`;
+      const hotelRef = fbPriceEntries.current.push();
+      const hotelId = hotelRef.key;
+      const hotelEntry = { trackKey: "住宿費(每晚均價)", month: label, price: perNight, divisor: nights, sourceMonth: newEntry.month, sourceItemIndex: itemIndex, sourceItemFbId: fbId, sourceItemName: newEntry.name };
+      setUserPriceHistory(prev => ({
+        ...prev,
+        "住宿費(每晚均價)": [...(prev["住宿費(每晚均價)"] || []), { id: hotelId, ...hotelEntry }],
+      }));
+      setVisibleItems(prev => new Set([...prev, "住宿費(每晚均價)"]));
+      hotelRef.set(hotelEntry).catch(e => console.warn("Save price entry error:", e));
+    } else if (newEntry.trackPrice) {
+      const autoInfo = getTrackInfo(newEntry.name);
+      // Priority: 1) manual dropdown selection, 2) TRACK_MAP auto, 3) item name as new key
+      const key = newEntry.trackTarget || (autoInfo ? autoInfo.trackKey : newEntry.name);
+      const divisor = newEntry.trackTarget ? qty : (autoInfo ? autoInfo.divisor : qty);
+      const unitPrice = Math.round(amount / divisor);
+      const newRef = fbPriceEntries.current.push();
+      const priceId = newRef.key;
+      const priceEntry = { trackKey: key, month: newEntry.month, price: unitPrice, divisor, sourceMonth: newEntry.month, sourceItemIndex: itemIndex, sourceItemFbId: fbId, sourceItemName: newEntry.name };
+      setUserPriceHistory(prev => ({
+        ...prev,
+        [key]: [...(prev[key] || []), { id: priceId, ...priceEntry }],
+      }));
+      setVisibleItems(prev => new Set([...prev, key]));
+      newRef.set(priceEntry).catch(e => console.warn("Save price entry error:", e));
+    }
+    const savedMonth = newEntry.month;
+    setNewEntry({ month: savedMonth, name: "", amount: "", qty: "1", trackPrice: false, isHotel: false, nights: "", trackTarget: "" });
+    setSelectedMonth(savedMonth);
+    setView("month");
+  }
+
+  const mergedPriceHistory = {};
+  Object.entries(PRICE_HISTORY).forEach(([k, entries]) => {
+    const dk = priceKeyAliases[k] || k;
+    const overrides = priceOverrides[dk] || priceOverrides[k] || {};
+    const filtered = entries
+      .map((e, i) => overrides[i]?.deleted ? null : { ...e, price: overrides[i]?.price ?? e.price })
+      .filter(Boolean);
+    mergedPriceHistory[dk] = filtered;
+  });
+  // Append user-added entries and sort chronologically (oldest left, newest right)
+  Object.entries(userPriceHistory).forEach(([k, v]) => {
+    mergedPriceHistory[k] = [...(mergedPriceHistory[k] || []), ...v];
+  });
+  Object.keys(mergedPriceHistory).forEach(k => {
+    mergedPriceHistory[k].sort((a, b) => {
+      const ma = (a.month.match(/([0-9]{4}[/][0-9]{2})/) || ["","0000/00"])[1];
+      const mb = (b.month.match(/([0-9]{4}[/][0-9]{2})/) || ["","0000/00"])[1];
+      return ma < mb ? -1 : ma > mb ? 1 : 0;
+    });
+  });
+  const selectedPriceHistory = selectedItem ? mergedPriceHistory[selectedItem] : null;
+  const [priceCategory, setPriceCategory] = useState("全部");
+  const priceCategories = ["全部", ...Object.keys(userCategories)];
+  const allVisible = [...visibleItems];
+  const filteredPriceItems = (priceCategory === "全部"
+    ? Object.keys(mergedPriceHistory)
+    : (userCategories[priceCategory] || [])
+  ).filter(i => visibleItems.has(i));
+
+  return (
+    <div style={{ background: COLORS.bg, minHeight: "100vh", color: COLORS.text, fontFamily: "'Noto Sans JP', 'Noto Sans TC', sans-serif", padding: "0 0 80px 0" }}>
+
+      {/* Header */}
+      <div style={{ background: "linear-gradient(135deg,#fff0eb,#fce8e0)", borderBottom: `1px solid ${COLORS.cardBorder}`, padding: "20px 20px 16px", position: "sticky", top: 0, zIndex: 100, boxShadow: "0 2px 12px rgba(232,132,122,0.10)" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div>
+            <div style={{ fontWeight: 800, fontSize: 18, letterSpacing: 1, color: "#c25a52" }}>ゆばちゃん 家計簿</div>
+            <div style={{ color: COLORS.muted, fontSize: 12 }}>我與柯の支出紀錄</div>
+          </div>
+          <div style={{ marginLeft: "auto", textAlign: "right" }}>
+            <div style={{ color: COLORS.accent, fontWeight: 800, fontSize: 18 }}>{fmt(grandTotal)}</div>
+            <div style={{ color: COLORS.muted, fontSize: 11 }}>累計總支出</div>
+          </div>
+        </div>
+      </div>
+
+      {/* Nav */}
+      <div style={{ display: "flex", gap: 0, background: COLORS.navBg, borderBottom: `1px solid ${COLORS.cardBorder}` }}>
+        {[["overview","📊 總覽"],["price","📈 價格追蹤"],["add","➕ 新增"]].map(([k,l]) => (
+          <button key={k} onClick={() => setView(k)}
+            style={{ flex: 1, padding: "12px 0", background: view === k ? COLORS.accentSoft : "transparent", color: view === k ? COLORS.accent : COLORS.muted, border: "none", borderBottom: view === k ? `2px solid ${COLORS.accent}` : "2px solid transparent", fontWeight: view === k ? 700 : 400, fontSize: 13, cursor: "pointer", transition: "all .2s", letterSpacing: 0.3 }}>
+            {l}
+          </button>
+        ))}
+      </div>
+
+      <div style={{ padding: "16px" }}>
+
+        {/* OVERVIEW */}
+        {view === "overview" && (
+          <div>
+            {/* Summary cards */}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 16 }}>
+              <div style={{ background: COLORS.card, border: `1px solid ${COLORS.cardBorder}`, borderRadius: 14, padding: "14px", boxShadow: "0 1px 6px rgba(232,132,122,0.07)" }}>
+                <div style={{ color: COLORS.muted, fontSize: 11, marginBottom: 4 }}>初期費用</div>
+                <div style={{ color: COLORS.accent2, fontWeight: 800, fontSize: 17 }}>{fmt(data["狗體"].total + data["保険一年(2024)"].total)}</div>
+              </div>
+              <div style={{ background: COLORS.card, border: `1px solid ${COLORS.cardBorder}`, borderRadius: 14, padding: "14px", boxShadow: "0 1px 6px rgba(232,132,122,0.07)" }}>
+                <div style={{ color: COLORS.muted, fontSize: 11, marginBottom: 4 }}>月平均支出</div>
+                <div style={{ color: COLORS.green, fontWeight: 800, fontSize: 17 }}>{fmt(Math.round(regularTotal / regularMonths.length))}</div>
+              </div>
+            </div>
+
+            {/* Chart */}
+            <div style={{ background: COLORS.card, border: `1px solid ${COLORS.cardBorder}`, borderRadius: 16, padding: "14px", marginBottom: 16, boxShadow: "0 2px 8px rgba(232,132,122,0.06)" }}>
+              <div style={{ color: COLORS.muted, fontSize: 12, marginBottom: 10 }}>月別支出推移</div>
+              <ResponsiveContainer width="100%" height={150}>
+                <LineChart data={chartData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke={COLORS.cardBorder} />
+                  <XAxis dataKey="month" tick={{ fill: COLORS.muted, fontSize: 9 }} tickFormatter={m => m.replace("20","")} />
+                  <YAxis tick={{ fill: COLORS.muted, fontSize: 9 }} tickFormatter={v => `${Math.round(v/1000)}k`} />
+                  <Tooltip formatter={v => fmt(v)} labelStyle={{ color: COLORS.text }} contentStyle={{ background: COLORS.card, border: `1px solid ${COLORS.cardBorder}`, borderRadius: 10, boxShadow: '0 2px 8px rgba(232,132,122,0.12)' }} />
+                  <Line type="monotone" dataKey="total" stroke={COLORS.accent} strokeWidth={2.5} dot={{ fill: COLORS.accent, r: 3 }} activeDot={{ r: 5 }} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+
+            {/* Month list */}
+            <div style={{ color: COLORS.muted, fontSize: 11, marginBottom: 8, fontWeight: 600, letterSpacing: 1 }}>月別明細</div>
+            {months.map(m => {
+              const d = data[m];
+              return (
+                <div key={m} onClick={() => { setSelectedMonth(m); setView("month"); }}
+                  style={{ background: COLORS.card, border: `1px solid ${COLORS.cardBorder}`, borderRadius: 14, padding: "14px 16px", marginBottom: 8, cursor: "pointer", display: "flex", alignItems: "center", gap: 12, transition: "all .15s", boxShadow: "0 1px 4px rgba(232,132,122,0.07)" }}>
+                  <span style={{ fontSize: 22 }}>{d.icon}</span>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontWeight: 700, fontSize: 14 }}>{m}</div>
+                    <div style={{ color: COLORS.muted, fontSize: 11, marginTop: 2 }}>{d.items.length} 項目</div>
+                  </div>
+                  <div style={{ textAlign: "right" }}>
+                    <div style={{ color: COLORS.accent, fontWeight: 800, fontSize: 16 }}>{fmt(d.total)}</div>
+                    {d.isSetup && <div style={{ color: "#e8847a", fontSize: 10, marginTop: 2, background: "rgba(232,132,122,0.1)", borderRadius: 8, padding: "1px 6px" }}>初期費用</div>}
+                  </div>
+                  <span style={{ color: COLORS.muted }}>›</span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* MONTH DETAIL */}
+        {view === "month" && selectedMonth && (
+          <div>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
+              <button onClick={() => setView("overview")} style={{ background: COLORS.card, border: `1px solid ${COLORS.cardBorder}`, borderRadius: 8, padding: "6px 12px", color: COLORS.text, cursor: "pointer", fontSize: 13 }}>← 返回</button>
+              <div style={{ fontWeight: 800, fontSize: 17 }}>{data[selectedMonth].icon} {selectedMonth}</div>
+              <div style={{ marginLeft: "auto", color: COLORS.accent, fontWeight: 800, fontSize: 18 }}>{fmt(data[selectedMonth].total)}</div>
+            </div>
+            {data[selectedMonth].items.map((item, i) => (
+              <div key={i} style={{ background: COLORS.card, border: `1px solid ${COLORS.cardBorder}`, borderRadius: 10, padding: "10px 14px", marginBottom: 6 }}>
+                {editingItem === i ? (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    <input value={editingItemVal.name} onChange={e => setEditingItemVal(p => ({...p, name: e.target.value}))}
+                      style={{ width: "100%", background: COLORS.bg, border: `1px solid ${COLORS.accent}`, borderRadius: 7, padding: "7px 10px", color: COLORS.text, fontSize: 13, outline: "none", boxSizing: "border-box" }} />
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <input value={editingItemVal.amount} onChange={e => setEditingItemVal(p => ({...p, amount: e.target.value}))}
+                        type="number"
+                        style={{ flex: 1, background: COLORS.bg, border: `1px solid ${COLORS.accent}`, borderRadius: 7, padding: "7px 10px", color: COLORS.text, fontSize: 13, outline: "none" }} />
+                      <button onClick={() => editMonthItem(i, editingItemVal.name, editingItemVal.amount)}
+                        style={{ background: COLORS.accent, border: "none", borderRadius: 7, padding: "7px 14px", color: "white", fontWeight: 700, cursor: "pointer", fontSize: 13 }}>✓</button>
+                      <button onClick={() => setEditingItem(null)}
+                        style={{ background: COLORS.bg, border: `1px solid ${COLORS.cardBorder}`, borderRadius: 7, padding: "7px 12px", color: COLORS.muted, cursor: "pointer", fontSize: 13 }}>✕</button>
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <div style={{ fontSize: 13, flex: 1 }}>{item.name}</div>
+                    <div style={{ color: COLORS.accent, fontWeight: 700, fontSize: 14, whiteSpace: "nowrap" }}>{fmt(item.amount)}</div>
+                    <button title="編輯" onClick={() => { setEditingItem(i); setEditingItemVal({ name: item.name, amount: String(item.amount) }); }}
+                      style={{ background: "none", border: `1px solid ${COLORS.cardBorder}`, borderRadius: 8, padding: "3px 7px", color: COLORS.muted, cursor: "pointer", fontSize: 12 }}>✎</button>
+                    <button title="加入價格追蹤" onClick={() => addMonthItemToTracking(item.name, item.amount, selectedMonth, i)}
+                      style={{ background: "none", border: `1px solid ${COLORS.cardBorder}`, borderRadius: 8, padding: "3px 7px", color: COLORS.muted, cursor: "pointer", fontSize: 12 }}>📈</button>
+                    <button title="刪除" onClick={() => deleteMonthItem(i)}
+                      style={{ background: "none", border: `1px solid ${COLORS.cardBorder}`, borderRadius: 8, padding: "3px 7px", color: COLORS.red, cursor: "pointer", fontSize: 12 }}>✕</button>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* PRICE TRACKING */}
+        {view === "price" && (
+          <div>
+            {/* Header row */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+              <div style={{ color: COLORS.muted, fontSize: 12 }}>追蹤固定購買商品的價格變化</div>
+              <button onClick={() => { setEditingCats(e => !e); setAddingItemToCat(null); }}
+                style={{ background: editingCats ? COLORS.accent : COLORS.card, border: `1px solid ${editingCats ? COLORS.accent : COLORS.cardBorder}`, borderRadius: 16, padding: "5px 12px", color: editingCats ? "#0f1117" : COLORS.muted, cursor: "pointer", fontSize: 11, fontWeight: 700 }}>
+                {editingCats ? "✓ 完成" : "✏️ 編輯"}
+              </button>
+            </div>
+
+            {/* Edit mode: manage categories */}
+            {editingCats && (
+              <div style={{ background: COLORS.card, border: `1px solid ${COLORS.cardBorder}`, borderRadius: 14, padding: 14, marginBottom: 12, boxShadow: "0 1px 6px rgba(232,132,122,0.07)" }}>
+                <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 10 }}>管理類別</div>
+                {Object.keys(userCategories).map(cat => (
+                  <div key={cat} style={{ marginBottom: 10 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                      <span style={{ fontWeight: 700, fontSize: 13, flex: 1 }}>{cat}</span>
+                      <button onClick={() => setAddingItemToCat(addingItemToCat === cat ? null : cat)}
+                        style={{ background: COLORS.accentSoft, border: `1px solid ${COLORS.accent}`, borderRadius: 12, padding: "3px 10px", color: COLORS.accent, cursor: "pointer", fontSize: 11 }}>＋項目</button>
+                      <button onClick={() => deleteCategory(cat)}
+                        style={{ background: "rgba(224,92,106,0.12)", border: "1px solid #e05c6a", borderRadius: 12, padding: "3px 10px", color: COLORS.red, cursor: "pointer", fontSize: 11 }}>🗑</button>
+                    </div>
+                    {/* Items in category with remove button */}
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6, paddingLeft: 4 }}>
+                      {(userCategories[cat] || []).map(item => (
+                        <div key={item} style={{ display: "flex", alignItems: "center", gap: 4, background: COLORS.bg, border: `1px solid ${COLORS.cardBorder}`, borderRadius: 16, padding: "4px 10px" }}>
+                          <span style={{ fontSize: 11, color: COLORS.text }}>{item}</span>
+                          <button onClick={() => removeItemFromCategory(cat, item)}
+                            style={{ background: "none", border: "none", color: COLORS.red, cursor: "pointer", fontSize: 12, padding: "0 2px", lineHeight: 1 }}>×</button>
+                        </div>
+                      ))}
+                    </div>
+                    {/* Add item input */}
+                    {addingItemToCat === cat && (
+                      <div style={{ marginTop: 8, display: "flex", gap: 6 }}>
+                        <select value={newItemForCat} onChange={e => setNewItemForCat(e.target.value)}
+                          style={{ flex: 1, background: COLORS.bg, border: `1px solid ${COLORS.accent}`, borderRadius: 8, padding: "6px 8px", color: COLORS.text, fontSize: 12 }}>
+                          <option value="">選擇追蹤商品...</option>
+                          {Object.keys(mergedPriceHistory).map(k => (
+                            <option key={k} value={k}>{k}</option>
+                          ))}
+                        </select>
+                        <button onClick={() => addItemToCategory(cat, newItemForCat)}
+                          style={{ background: COLORS.accent, border: "none", borderRadius: 8, padding: "6px 12px", color: "#0f1117", fontWeight: 700, cursor: "pointer", fontSize: 12 }}>加入</button>
+                      </div>
+                    )}
+                  </div>
+                ))}
+                {/* Add new category */}
+                <div style={{ borderTop: `1px solid ${COLORS.cardBorder}`, paddingTop: 10, marginTop: 4, display: "flex", gap: 8 }}>
+                  <input value={newCatName} onChange={e => setNewCatName(e.target.value)}
+                    placeholder="新類別名稱..."
+                    style={{ flex: 1, background: COLORS.bg, border: `1px solid ${COLORS.cardBorder}`, borderRadius: 8, padding: "7px 10px", color: COLORS.text, fontSize: 12, outline: "none" }} />
+                  <button onClick={addCategory}
+                    style={{ background: COLORS.accent, border: "none", borderRadius: 8, padding: "7px 14px", color: "#0f1117", fontWeight: 700, cursor: "pointer", fontSize: 12 }}>＋新增</button>
+                </div>
+              </div>
+            )}
+
+            {/* Non-edit mode: show/hide items toggle */}
+            {/* Category tabs */}
+            <div style={{ display: "flex", overflowX: "auto", gap: 6, marginBottom: 12, paddingBottom: 4 }}>
+              {priceCategories.map(cat => (
+                <button key={cat} onClick={() => { setPriceCategory(cat); setSelectedItem(null); }}
+                  style={{ background: priceCategory === cat ? COLORS.accent : COLORS.card, border: `1px solid ${priceCategory === cat ? COLORS.accent : COLORS.cardBorder}`, borderRadius: 16, padding: "5px 12px", color: priceCategory === cat ? "#0f1117" : COLORS.muted, cursor: "pointer", fontSize: 11, fontWeight: priceCategory === cat ? 800 : 400, whiteSpace: "nowrap", flexShrink: 0 }}>
+                  {cat}
+                </button>
+              ))}
+            </div>
+            {/* Item buttons */}
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 7, marginBottom: 14 }}>
+              {filteredPriceItems.map(item => (
+                <div key={item} style={{ display: "flex", alignItems: "center", borderRadius: 20, border: `1px solid ${selectedItem === item ? COLORS.accent : COLORS.cardBorder}`, background: selectedItem === item ? COLORS.accentSoft : COLORS.card, overflow: "hidden" }}>
+                  {editingPriceKey === item ? (
+                    <><input autoFocus value={editingPriceKeyVal} onChange={e => setEditingPriceKeyVal(e.target.value)}
+                        onKeyDown={e => { if (e.key === "Enter") renamePriceKey(item, editingPriceKeyVal); if (e.key === "Escape") { setEditingPriceKey(null); setEditingPriceKeyVal(""); } }}
+                        style={{ background: "transparent", border: "none", padding: "7px 10px", color: COLORS.text, fontSize: 12, outline: "none", minWidth: 60, maxWidth: 160 }} />
+                      <button onClick={() => renamePriceKey(item, editingPriceKeyVal)}
+                        style={{ background: COLORS.accent, border: "none", padding: "7px 8px", color: "white", cursor: "pointer", fontSize: 11, fontWeight: 700 }}>✓</button>
+                      <button onClick={() => { setEditingPriceKey(null); setEditingPriceKeyVal(""); }}
+                        style={{ background: "transparent", border: "none", padding: "7px 6px", color: COLORS.muted, cursor: "pointer", fontSize: 11 }}>✕</button></>
+                  ) : (
+                    <><button onClick={() => setSelectedItem(item)}
+                        style={{ background: "transparent", border: "none", padding: "7px 12px", color: selectedItem === item ? COLORS.accent : COLORS.text, cursor: "pointer", fontSize: 12, fontWeight: selectedItem === item ? 700 : 400 }}>{item}</button>
+                      <button onClick={() => { setEditingPriceKey(item); setEditingPriceKeyVal(item); }}
+                        style={{ background: "transparent", border: "none", padding: "7px 8px 7px 0", color: COLORS.muted, cursor: "pointer", fontSize: 11, opacity: 0.6 }}>✎</button></>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            {selectedItem && selectedPriceHistory && (
+              <div>
+                <div style={{ background: COLORS.card, border: `1px solid ${COLORS.cardBorder}`, borderRadius: 14, padding: 14, marginBottom: 12, boxShadow: "0 1px 6px rgba(232,132,122,0.07)" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+                    {editingPriceKey === selectedItem ? (
+                      <><input autoFocus value={editingPriceKeyVal} onChange={e => setEditingPriceKeyVal(e.target.value)}
+                          onKeyDown={e => { if (e.key === "Enter") renamePriceKey(selectedItem, editingPriceKeyVal); if (e.key === "Escape") { setEditingPriceKey(null); setEditingPriceKeyVal(""); } }}
+                          style={{ flex: 1, background: COLORS.bg, border: `1px solid ${COLORS.accent}`, borderRadius: 8, padding: "6px 10px", color: COLORS.text, fontSize: 14, fontWeight: 700, outline: "none" }} />
+                        <button onClick={() => renamePriceKey(selectedItem, editingPriceKeyVal)}
+                          style={{ background: COLORS.accent, border: "none", borderRadius: 7, padding: "6px 10px", color: "white", cursor: "pointer", fontSize: 13, fontWeight: 700 }}>✓</button>
+                        <button onClick={() => { setEditingPriceKey(null); setEditingPriceKeyVal(""); }}
+                          style={{ background: COLORS.bg, border: `1px solid ${COLORS.cardBorder}`, borderRadius: 7, padding: "6px 8px", color: COLORS.muted, cursor: "pointer", fontSize: 13 }}>✕</button></>
+                    ) : (
+                      <><div style={{ fontWeight: 700, flex: 1 }}>{selectedItem} 價格推移</div>
+                        <button onClick={() => { setEditingPriceKey(selectedItem); setEditingPriceKeyVal(selectedItem); }}
+                          style={{ background: COLORS.bg, border: `1px solid ${COLORS.cardBorder}`, borderRadius: 12, padding: "4px 10px", color: COLORS.muted, cursor: "pointer", fontSize: 11 }}>✎ 重命名</button></>
+                    )}
+                  </div>
+                  <ResponsiveContainer width="100%" height={160}>
+                    <LineChart data={selectedPriceHistory}>
+                      <CartesianGrid strokeDasharray="3 3" stroke={COLORS.cardBorder} />
+                      <XAxis dataKey="month" tick={{ fill: COLORS.muted, fontSize: 9 }} tickFormatter={m => m.replace("20","")} />
+                      <YAxis tick={{ fill: COLORS.muted, fontSize: 9 }} domain={["auto","auto"]} tickFormatter={v => `¥${v}`} />
+                      <Tooltip formatter={v => fmt(v)} contentStyle={{ background: COLORS.card, border: `1px solid ${COLORS.cardBorder}`, borderRadius: 10, boxShadow: '0 2px 8px rgba(232,132,122,0.12)' }} />
+                      <Line type="monotone" dataKey="price" stroke={COLORS.accent} strokeWidth={2.5} dot={{ fill: COLORS.accent, r: 4 }} activeDot={{ r: 6, fill: COLORS.accent2 }} />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+
+                <div style={{ background: COLORS.card, border: `1px solid ${COLORS.cardBorder}`, borderRadius: 14, padding: 14, boxShadow: "0 1px 6px rgba(232,132,122,0.07)" }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+                    <div style={{ fontWeight: 700, fontSize: 13 }}>歷史價格</div>
+                    <button onClick={() => setAddingManualPrice(v => !v)}
+                      style={{ background: addingManualPrice ? COLORS.accentSoft : COLORS.bg, border: `1px solid ${COLORS.accent}`, borderRadius: 12, padding: "4px 10px", color: COLORS.accent, cursor: "pointer", fontSize: 11, fontWeight: 700 }}>
+                      ＋ 手動新增
+                    </button>
+                  </div>
+                  {/* Manual add form */}
+                  {addingManualPrice && (
+                    <div style={{ background: COLORS.bg, borderRadius: 10, padding: 12, marginBottom: 10, display: "flex", flexDirection: "column", gap: 8 }}>
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <input value={manualPrice.month} onChange={e => setManualPrice(p => ({...p, month: e.target.value}))}
+                          placeholder="月份 e.g. 2026/06"
+                          style={{ flex: 2, background: COLORS.card, border: `1px solid ${COLORS.cardBorder}`, borderRadius: 7, padding: "7px 10px", color: COLORS.text, fontSize: 12, outline: "none" }} />
+                        <input value={manualPrice.price} onChange={e => setManualPrice(p => ({...p, price: e.target.value}))}
+                          type="number" placeholder="總金額"
+                          style={{ flex: 2, background: COLORS.card, border: `1px solid ${COLORS.cardBorder}`, borderRadius: 7, padding: "7px 10px", color: COLORS.text, fontSize: 12, outline: "none" }} />
+                        <input value={manualPrice.qty} onChange={e => setManualPrice(p => ({...p, qty: e.target.value}))}
+                          type="number" min="1" placeholder="數量"
+                          style={{ flex: 1, background: COLORS.card, border: `1px solid ${COLORS.cardBorder}`, borderRadius: 7, padding: "7px 10px", color: COLORS.text, fontSize: 12, outline: "none" }} />
+                      </div>
+                      {manualPrice.price && parseInt(manualPrice.qty) > 1 && (
+                        <div style={{ fontSize: 11, color: COLORS.muted }}>單價：{fmt(Math.round(parseInt(manualPrice.price) / parseInt(manualPrice.qty)))}</div>
+                      )}
+                      <button onClick={() => { setManualPrice(p => ({...p, name: selectedItem})); addManualPriceEntry(); }}
+                        style={{ background: COLORS.accent, border: "none", borderRadius: 8, padding: "8px", color: "white", fontWeight: 700, cursor: "pointer", fontSize: 12 }}>確認新增</button>
+                    </div>
+                  )}
+                  {selectedPriceHistory.map((h, i) => {
+                    const prev = selectedPriceHistory[i - 1];
+                    const diff = prev ? h.price - prev.price : 0;
+                    const editable = isUserEntry(selectedItem, i);
+                    const isEditing = editingPriceItem && editingPriceItem.item === selectedItem && editingPriceItem.index === i;
+                    return (
+                      <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0", borderBottom: i < selectedPriceHistory.length - 1 ? `1px solid ${COLORS.cardBorder}` : "none", gap: 6 }}>
+                        <div style={{ color: COLORS.muted, fontSize: 12, minWidth: 80 }}>{h.month}</div>
+                        {isEditing ? (
+                          <div style={{ display: "flex", gap: 6, alignItems: "center", flex: 1 }}>
+                            <input autoFocus value={editingPriceVal} onChange={e => setEditingPriceVal(e.target.value)}
+                              type="number"
+                              style={{ flex: 1, background: COLORS.bg, border: `1px solid ${COLORS.accent}`, borderRadius: 6, padding: "4px 8px", color: COLORS.text, fontSize: 13, outline: "none" }} />
+                            <button onClick={() => updateUserPriceEntry(selectedItem, i, editingPriceVal)}
+                              style={{ background: COLORS.accent, border: "none", borderRadius: 6, padding: "4px 10px", color: "white", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>✓</button>
+                            <button onClick={() => setEditingPriceItem(null)}
+                              style={{ background: COLORS.bg, border: `1px solid ${COLORS.cardBorder}`, borderRadius: 6, padding: "4px 8px", color: COLORS.muted, fontSize: 12, cursor: "pointer" }}>✕</button>
+                          </div>
+                        ) : (
+                          <div style={{ display: "flex", alignItems: "center", gap: 8, flex: 1, justifyContent: "flex-end" }}>
+                            {diff !== 0 && (
+                              <span style={{ fontSize: 11, color: diff > 0 ? COLORS.red : COLORS.green, fontWeight: 600 }}>
+                                {diff > 0 ? "▲" : "▼"}{fmt(Math.abs(diff))}
+                              </span>
+                            )}
+                            <span style={{ fontWeight: 700, color: COLORS.accent }}>{fmt(h.price)}</span>
+                            {editable && (
+                              <>
+                                <button onClick={() => { setEditingPriceItem({ item: selectedItem, index: i }); setEditingPriceVal(String(h.price)); }}
+                                  style={{ background: "none", border: "none", color: COLORS.muted, cursor: "pointer", fontSize: 13, padding: "0 2px" }}>✎</button>
+                                <button onClick={() => deleteUserPriceEntry(selectedItem, i)}
+                                  style={{ background: "none", border: "none", color: COLORS.red, cursor: "pointer", fontSize: 13, padding: "0 2px" }}>✕</button>
+                              </>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                  <div style={{ marginTop: 10, padding: "10px", background: "rgba(232,132,122,0.08)", borderRadius: 10, fontSize: 12 }}>
+                    <span style={{ color: COLORS.muted }}>最高: </span>
+                    <span style={{ color: COLORS.red, fontWeight: 700 }}>{fmt(Math.max(...selectedPriceHistory.map(h => h.price)))}</span>
+                    <span style={{ margin: "0 12px", color: COLORS.muted }}>最低: </span>
+                    <span style={{ color: COLORS.green, fontWeight: 700 }}>{fmt(Math.min(...selectedPriceHistory.map(h => h.price)))}</span>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {!selectedItem && (
+              <div style={{ background: COLORS.card, border: `1px solid ${COLORS.cardBorder}`, borderRadius: 14, padding: 24, textAlign: "center", color: COLORS.muted }}>
+                請選擇上方商品查看價格變化 📈
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ADD */}
+        {view === "add" && (
+          <div>
+            <div style={{ fontWeight: 700, fontSize: 16, marginBottom: 16 }}>新增支出記錄</div>
+            <div style={{ background: COLORS.card, border: `1px solid ${COLORS.cardBorder}`, borderRadius: 16, padding: 18, display: "flex", flexDirection: "column", gap: 14, boxShadow: "0 2px 10px rgba(232,132,122,0.08)" }}>
+              <div>
+                <div style={{ color: COLORS.muted, fontSize: 12, marginBottom: 6 }}>月份</div>
+                <input value={newEntry.month} onChange={e => setNewEntry(p => ({...p, month: e.target.value}))}
+                  placeholder="e.g. 2026/06"
+                  style={{ width: "100%", background: COLORS.bg, border: `1px solid ${COLORS.cardBorder}`, borderRadius: 8, padding: "10px 12px", color: COLORS.text, fontSize: 14, outline: "none", boxSizing: "border-box" }} />
+              </div>
+              <div>
+                <div style={{ color: COLORS.muted, fontSize: 12, marginBottom: 6 }}>商品/項目名稱</div>
+                <input value={newEntry.name} onChange={e => setNewEntry(p => ({...p, name: e.target.value}))}
+                  placeholder="e.g. 乳酸菌90g*2"
+                  style={{ width: "100%", background: COLORS.bg, border: `1px solid ${COLORS.cardBorder}`, borderRadius: 8, padding: "10px 12px", color: COLORS.text, fontSize: 14, outline: "none", boxSizing: "border-box" }} />
+              </div>
+              {/* Hotel mode toggle */}
+              <div onClick={() => setNewEntry(p => ({ ...p, isHotel: !p.isHotel, trackPrice: false }))}
+                style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer", padding: "10px 12px", background: newEntry.isHotel ? "rgba(91,156,246,0.08)" : COLORS.bg, border: `1px solid ${newEntry.isHotel ? COLORS.blue : COLORS.cardBorder}`, borderRadius: 10, transition: "all .15s" }}>
+                <div style={{ width: 20, height: 20, borderRadius: 6, background: newEntry.isHotel ? COLORS.blue : "transparent", border: `2px solid ${newEntry.isHotel ? COLORS.blue : COLORS.muted}`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, transition: "all .15s" }}>
+                  {newEntry.isHotel && <span style={{ color: "white", fontSize: 12, fontWeight: 900 }}>✓</span>}
+                </div>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: COLORS.text }}>住宿記錄 🏨</div>
+                  <div style={{ fontSize: 11, color: COLORS.muted, marginTop: 2 }}>自動換算每晚均價加入追蹤</div>
+                </div>
+              </div>
+
+              {/* Amount + qty/nights row */}
+              <div style={{ display: "flex", gap: 10 }}>
+                <div style={{ flex: 2 }}>
+                  <div style={{ color: COLORS.muted, fontSize: 12, marginBottom: 6 }}>總金額 (¥)</div>
+                  <input value={newEntry.amount} onChange={e => setNewEntry(p => ({...p, amount: e.target.value}))}
+                    type="number" placeholder="e.g. 20500"
+                    style={{ width: "100%", background: COLORS.bg, border: `1px solid ${COLORS.cardBorder}`, borderRadius: 8, padding: "10px 12px", color: COLORS.text, fontSize: 14, outline: "none", boxSizing: "border-box" }} />
+                </div>
+                {newEntry.isHotel ? (
+                  <div style={{ flex: 1 }}>
+                    <div style={{ color: COLORS.muted, fontSize: 12, marginBottom: 6 }}>天數</div>
+                    <input value={newEntry.nights} onChange={e => setNewEntry(p => ({...p, nights: e.target.value}))}
+                      type="number" min="1" placeholder="3"
+                      style={{ width: "100%", background: COLORS.bg, border: `1px solid ${COLORS.blue}`, borderRadius: 8, padding: "10px 12px", color: COLORS.text, fontSize: 14, outline: "none", boxSizing: "border-box" }} />
+                  </div>
+                ) : (
+                  <div style={{ flex: 1 }}>
+                    <div style={{ color: COLORS.muted, fontSize: 12, marginBottom: 6 }}>數量</div>
+                    <input value={newEntry.qty} onChange={e => setNewEntry(p => ({...p, qty: e.target.value}))}
+                      type="number" min="1" placeholder="1"
+                      style={{ width: "100%", background: COLORS.bg, border: `1px solid ${COLORS.cardBorder}`, borderRadius: 8, padding: "10px 12px", color: COLORS.text, fontSize: 14, outline: "none", boxSizing: "border-box" }} />
+                  </div>
+                )}
+              </div>
+
+              {/* Preview */}
+              {newEntry.amount && newEntry.isHotel && newEntry.nights && (
+                <div style={{ fontSize: 12, color: COLORS.blue, background: "rgba(91,156,246,0.08)", borderRadius: 8, padding: "8px 12px" }}>
+                  每晚均價：{fmt(Math.round(parseInt(newEntry.amount) / Math.max(1, parseInt(newEntry.nights))))} → 自動加入「住宿費(每晚均價)」追蹤
+                </div>
+              )}
+              {newEntry.amount && !newEntry.isHotel && parseInt(newEntry.qty) > 1 && (
+                <div style={{ fontSize: 12, color: COLORS.muted, background: COLORS.accentSoft, borderRadius: 8, padding: "8px 12px" }}>
+                  單價：{fmt(Math.round(parseInt(newEntry.amount) / parseInt(newEntry.qty)))}
+                </div>
+              )}
+
+              {/* Price tracking toggle (non-hotel only) */}
+              {!newEntry.isHotel && (
+                <div style={{ border: `1px solid ${newEntry.trackPrice ? COLORS.accent : COLORS.cardBorder}`, borderRadius: 10, overflow: "hidden", transition: "all .15s" }}>
+                  <div onClick={() => setNewEntry(p => ({...p, trackPrice: !p.trackPrice, trackTarget: ""}))}
+                    style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer", padding: "10px 12px", background: newEntry.trackPrice ? "rgba(232,132,122,0.08)" : COLORS.bg }}>
+                    <div style={{ width: 20, height: 20, borderRadius: 6, background: newEntry.trackPrice ? COLORS.accent : "transparent", border: `2px solid ${newEntry.trackPrice ? COLORS.accent : COLORS.muted}`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, transition: "all .15s" }}>
+                      {newEntry.trackPrice && <span style={{ color: "white", fontSize: 12, fontWeight: 900 }}>✓</span>}
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: COLORS.text }}>加入價格追蹤 📈</div>
+                      <div style={{ fontSize: 11, color: COLORS.muted, marginTop: 2 }}>會以單價記錄在價格追蹤頁</div>
+                    </div>
+                  </div>
+                  {newEntry.trackPrice && (
+                    <div style={{ padding: "0 12px 12px", background: "rgba(232,132,122,0.04)" }}>
+                      <div style={{ fontSize: 11, color: COLORS.muted, marginBottom: 6 }}>加入哪個追蹤項目？</div>
+                      {(() => { const auto = getTrackInfo(newEntry.name); return (
+                        <div style={{ fontSize: 11, color: COLORS.accent, marginBottom: 6 }}>
+                          {auto ? `自動對應 → 「${auto.trackKey}」` : "找不到對應項目，將新建追蹤"}
+                        </div>
+                      ); })()}
+                      <select value={newEntry.trackTarget} onChange={e => setNewEntry(p => ({...p, trackTarget: e.target.value}))}
+                        style={{ width: "100%", background: COLORS.card, border: `1px solid ${COLORS.cardBorder}`, borderRadius: 8, padding: "8px 10px", color: COLORS.text, fontSize: 13, outline: "none" }}>
+                        <option value="">{(() => { const auto = getTrackInfo(newEntry.name); return auto ? `自動：${auto.trackKey}` : `新建：${newEntry.name || "（請先填商品名）"}`; })()}</option>
+                        {Object.keys(mergedPriceHistory).map(k => (
+                          <option key={k} value={k}>{k}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                </div>
+              )}
+              <button onClick={handleAddEntry}
+                style={{ background: "linear-gradient(135deg,#e8847a,#f0a896)", border: "none", borderRadius: 10, padding: "12px", color: "white", fontWeight: 800, fontSize: 15, cursor: "pointer" }}>
+                ＋ 新增記錄
+              </button>
+            </div>
+
+            <div style={{ marginTop: 20, background: COLORS.card, border: `1px solid ${COLORS.cardBorder}`, borderRadius: 14, padding: 16 }}>
+              <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 12, color: COLORS.muted }}>快速選擇月份</div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                {months.map(m => (
+                  <button key={m} onClick={() => setNewEntry(p => ({...p, month: m}))}
+                    style={{ background: newEntry.month === m ? COLORS.accentSoft : COLORS.bg, border: `1px solid ${newEntry.month === m ? COLORS.accent : COLORS.cardBorder}`, borderRadius: 20, padding: "5px 12px", color: newEntry.month === m ? COLORS.accent : COLORS.muted, cursor: "pointer", fontSize: 12 }}>
+                    {m}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+    ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(App));
+  </script>
+</body>
+</html>
